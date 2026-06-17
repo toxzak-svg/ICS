@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ics-quant"
+version = "0.1.0"
+description = "Isomorphic Channel Sorting (ICS) — offline topological weight permutation for NPU-friendly block quantization"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.1",
+    "transformers>=4.40",
+    "safetensors>=0.4",
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov"]
+gpu = ["accelerate>=0.27"]
+
+[project.scripts]
+ics-quant = "scripts.colab_quantize_ics:main"
+ics-test-correctness = "scripts.test_correctness:main"
+ics-test-pipeline = "scripts.test_pipeline_smoke:main"
+
+[tool.setuptools.packages.find]
+include = ["ics*"]
+exclude = ["tests*", "scripts*"]
+
+[tool.setuptools.package-data]
+ics = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

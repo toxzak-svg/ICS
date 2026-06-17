@@ -1,0 +1,11 @@
+# Core
+torch>=2.1
+transformers>=4.40
+safetensors>=0.4
+numpy>=1.24
+scipy>=1.10
+
+# Optional
+accelerate>=0.27 ; extra == "gpu"
+pytest>=7.0 ; extra == "dev"
+pytest-cov>=4.0 ; extra == "dev"

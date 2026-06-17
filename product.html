@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICS — Isomorphic Channel Sorting</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --card: #ffffff;
+    --line: #e9e3d6;
+    --line-soft: #f0ebde;
+    --ink: #14171e;
+    --ink-2: #3a4256;
+    --ink-3: #7c7a72;
+    --accent: #c97b3f;
+    --accent-soft: rgba(201, 123, 63, 0.08);
+    --accent-line: rgba(201, 123, 63, 0.25);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Outfit', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    top: -200px;
+    right: -200px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(201, 123, 63, 0.05) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    bottom: -200px;
+    left: -200px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(47, 111, 94, 0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 64px 32px 96px;
+  }
+  .hero {
+    margin-bottom: 72px;
+    padding-bottom: 48px;
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 56px;
+    font-weight: 400;
+    line-height: 1.05;
+    margin: 0 0 20px 0;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  h1 .accent { color: var(--accent); font-style: italic; }
+  .lede {
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 680px;
+    margin: 0;
+  }
+  h2 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 32px;
+    font-weight: 400;
+    line-height: 1.15;
+    margin: 0 0 12px 0;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+  }
+  h2 .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    margin-right: 14px;
+    vertical-align: 4px;
+    letter-spacing: 0.05em;
+  }
+  h3 {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 16px;
+    margin: 0 0 8px 0;
+    color: var(--ink);
+  }
+  p {
+    margin: 0 0 12px 0;
+    color: var(--ink-2);
+  }
+  p strong { color: var(--ink); font-weight: 600; }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    background: var(--accent-soft);
+    color: var(--ink);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  pre {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin: 16px 0 24px 0;
+    overflow-x: auto;
+    color: var(--ink-2);
+  }
+  pre .k { color: var(--accent); }
+  pre .c { color: var(--ink-3); font-style: italic; }
+  .section {
+    margin-bottom: 72px;
+  }
+  .sub {
+    color: var(--ink-3);
+    font-size: 14px;
+    margin: 0 0 28px 0;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 2px rgba(20, 23, 30, 0.02);
+  }
+  .card.tight { padding: 18px 22px; }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0 24px 0;
+  }
+  @media (max-width: 700px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    h1 { font-size: 40px; }
+  }
+  .bench {
+    display: grid;
+    grid-template-columns: 180px 1fr 90px;
+    gap: 14px;
+    align-items: center;
+    padding: 7px 0;
+  }
+  .bench-label {
+    font-size: 13px;
+    color: var(--ink-2);
+    font-weight: 500;
+  }
+  .bench-track {
+    height: 14px;
+    background: var(--line-soft);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .bench-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    transition: width 0.4s ease;
+  }
+  .bench-fill.muted { background: var(--ink-3); opacity: 0.4; }
+  .bench-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--ink);
+    text-align: right;
+  }
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+    margin: 24px 0 8px 0;
+    position: relative;
+  }
+  @media (max-width: 800px) {
+    .pipeline { grid-template-columns: 1fr; gap: 8px; }
+  }
+  .pipe-step {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 14px;
+    position: relative;
+    margin-right: -1px;
+    text-align: center;
+  }
+  @media (max-width: 800px) {
+    .pipe-step { margin-right: 0; }
+  }
+  .pipe-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .pipe-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .pipe-detail {
+    font-size: 11px;
+    color: var(--ink-3);
+    line-height: 1.4;
+  }
+  .pipe-step svg {
+    margin: 0 auto 8px;
+    color: var(--accent);
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    row-gap: 10px;
+    column-gap: 18px;
+    margin: 0;
+  }
+  .kv dt {
+    color: var(--ink-3);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .kv dd {
+    margin: 0;
+    color: var(--ink);
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--line);
+    font-size: 13px;
+  }
+  .file-tree {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--ink-2);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 24px;
+  }
+  .file-tree .d { color: var(--accent); }
+  .file-tree .f { color: var(--ink); }
+  .file-tree .c { color: var(--ink-3); }
+  .equation {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin: 16px 0 24px 0;
+    text-align: center;
+    font-family: 'DM Serif Display', serif;
+    font-size: 24px;
+    color: var(--ink);
+    letter-spacing: 0.01em;
+  }
+  .equation .op { color: var(--accent); margin: 0 8px; }
+  .equation-note {
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    color: var(--ink-3);
+    margin-top: 10px;
+    font-style: italic;
+  }
+  .math-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .math-row .lhs, .math-row .rhs {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .arrow-soft {
+    color: var(--accent);
+    font-size: 18px;
+  }
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(20, 1fr);
+    gap: 2px;
+    margin: 8px 0 4px 0;
+  }
+  .strip-cell {
+    height: 24px;
+    border-radius: 2px;
+    background: var(--line-soft);
+  }
+  .strip-cell.hi { background: var(--accent); }
+  .strip-cell.mid { background: rgba(201, 123, 63, 0.45); }
+  .strip-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-3);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-top: 6px;
+  }
+  .footer {
+    margin-top: 80px;
+    padding-top: 32px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-3);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 20px 0 8px 0;
+  }
+  @media (max-width: 700px) {
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .stat-num {
+    font-family: 'DM Serif Display', serif;
+    font-size: 30px;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--ink-3);
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="hero">
+    <div class="eyebrow">ICS / Mobile NPU Quantization / Compile-Time</div>
+    <h1>Isomorphic<br><span class="accent">Channel Sorting</span></h1>
+    <p class="lede">Offline topological permutation of a neural network's weight matrix, so standard block quantization just works &mdash; no runtime sparse-gather, no FABQ-RC patching, single contiguous memory read on a mobile NPU.</p>
+  </header>
+
+  <section class="section">
+    <h2><span class="num">01</span>Why FABQ-RC breaks on a phone</h2>
+    <p class="sub">Mobile NPUs are bound by unified-memory bandwidth, not raw FLOPs. The runtime cost isn't the math &mdash; it's the fetches.</p>
+    <div class="grid-2">
+      <div class="card">
+        <h3>FABQ-RC at runtime</h3>
+        <p>Two memory streams &mdash; dense base weights and a sparse residual codebook &mdash; are fetched separately, then stitched via branching logic or sparse addition. Each token's forward pass pays the cache-miss cost on every layer.</p>
+        <pre><span class="c"># FABQ-RC forward, per layer</span>
+y = matmul(x, W_base)        <span class="c"># dense fetch</span>
+idx, rcode = lookup_residual(x)
+y += scatter_add(rcode, idx) <span class="c"># sparse gather</span></pre>
+      </div>
+      <div class="card">
+        <h3>What ICS delivers instead</h3>
+        <p>One monolithic INT4/INT2/INT1 weight tensor. Outliers are pre-sorted next to other outliers, so the per-block scaling factor <code>&alpha;</code> never crushes normal weights. Single sequential read, no branching.</p>
+        <pre><span class="c"># ICS at runtime, per layer</span>
+y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">02</span>The identity that makes it free</h2>
+    <p class="sub">The permutation cancels algebraically. The model's outputs are bit-identical to the un-permuted model, modulo FP roundoff.</p>
+    <div class="equation">
+      <div class="math-row">
+        <span class="lhs">Y</span>
+        <span class="op">=</span>
+        <span class="rhs">X &middot; (W<sub>A</sub> P<sup>T</sup>) &middot; (P W<sub>B</sub>)</span>
+        <span class="op">=</span>
+        <span class="rhs">X &middot; W<sub>A</sub> &middot; W<sub>B</sub></span>
+      </div>
+      <div class="equation-note">P is an orthogonal permutation matrix, P<sup>&minus;1</sup> = P<sup>T</sup>. Forward-pass-exact, by construction.</div>
+    </div>
+    <p>All the cleverness is in <em>which</em> P we pick. The pipeline sorts channels so that high-Fisher (loss-sensitive) channels AND high-magnitude outliers land in the same dense blocks &mdash; which then get INT4 precision. The low-importance tail gets INT2/INT1.</p>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">03</span>Channel ordering: before vs after</h2>
+    <p class="sub">Same weights, same model, same outputs. Only the layout changes.</p>
+    <div class="card">
+      <h3>Before ICS &mdash; outliers scattered</h3>
+      <div class="strip">
+        <div class="strip-cell mid"></div><div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell hi"></div>
+        <div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell mid"></div><div class="strip-cell"></div>
+        <div class="strip-cell"></div><div class="strip-cell hi"></div><div class="strip-cell"></div><div class="strip-cell"></div>
+        <div class="strip-cell mid"></div><div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div>
+        <div class="strip-cell"></div><div class="strip-cell mid"></div><div class="strip-cell hi"></div><div class="strip-cell"></div>
+      </div>
+      <div class="strip-label">20 channels of one weight matrix &middot; outlier (orange) at positions 3, 6, 9, 12, 17, 19</div>
+    </div>
+    <div class="card">
+      <h3>After ICS &mdash; outliers clustered</h3>
+      <div class="strip">
+        <div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div>
+        <div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div>
+        <div class="strip-cell mid"></div><div class="strip-cell mid"></div><div class="strip-cell mid"></div><div class="strip-cell mid"></div>
+        <div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div><div class="strip-cell"></div>
+        <div class="strip-cell hi"></div><div class="strip-cell hi"></div><div class="strip-cell hi"></div><div class="strip-cell hi"></div>
+      </div>
+      <div class="strip-label">Same 20 channels, permuted. All outliers now sit in the dense INT4 blocks.</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">04</span>The pipeline</h2>
+    <p class="sub">Five steps, all offline, run once per model.</p>
+    <div class="pipeline">
+      <div class="pipe-step">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        <div class="pipe-num">01</div>
+        <div class="pipe-name">Load</div>
+        <div class="pipe-detail">NF4 via BitsAndBytes &middot; ~14 GB for 27B on T4</div>
+      </div>
+      <div class="pipe-step">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h6l2-4 4 8 2-4h6"/></svg>
+        <div class="pipe-num">02</div>
+        <div class="pipe-name">Fisher</div>
+        <div class="pipe-detail">64 short strings &middot; activation sensitivity per channel</div>
+      </div>
+      <div class="pipe-step">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/><circle cx="9" cy="6" r="2" fill="currentColor"/><circle cx="15" cy="12" r="2" fill="currentColor"/><circle cx="6" cy="18" r="2" fill="currentColor"/></svg>
+        <div class="pipe-num">03</div>
+        <div class="pipe-name">Permute</div>
+        <div class="pipe-detail">Composite or spectral sort, block-aware</div>
+      </div>
+      <div class="pipe-step">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <div class="pipe-num">04</div>
+        <div class="pipe-name">Apply</div>
+        <div class="pipe-detail">Bake perm into rows of producers, cols of consumer</div>
+      </div>
+      <div class="pipe-step">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+        <div class="pipe-num">05</div>
+        <div class="pipe-name">Quantize</div>
+        <div class="pipe-detail">INT4 / INT2 / INT1 per block, Fisher-weighted</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">05</span>What you ship</h2>
+    <p class="sub">One CLI, one directory. Drop the directory on a phone, hand it to a CoreML / QNN / NNAPI compiler.</p>
+    <div class="card tight">
+      <h3>The command</h3>
+<pre><span class="c"># Colab T4, gemma-4-27b</span>
+!python scripts/colab_quantize_ics.py \
+    <span class="k">--model</span>  google/gemma-4-27b \
+    <span class="k">--output</span> ./gemma-4-27b-ics \
+    <span class="k">--max-calibration-samples</span> 64 \
+    <span class="k">--max-calibration-length</span>  256</pre>
+    </div>
+    <div class="card tight">
+      <h3>What lands on disk</h3>
+      <div class="file-tree">
+<span class="d">gemma-4-27b-ics/</span>
+├── <span class="f">model.safetensors</span>      <span class="c"># packed quantized weights, int8 storage</span>
+├── <span class="f">scales.safetensors</span>     <span class="c"># per-block scaling factors, fp32</span>
+├── <span class="f">zeros.safetensors</span>      <span class="c"># per-block zero points, i32</span>
+├── <span class="f">bits.safetensors</span>       <span class="c"># per-block bit-width (1 / 2 / 4), i32</span>
+├── <span class="f">ics_meta.json</span>          <span class="c"># permutation metadata + original shapes</span>
+├── <span class="f">tokenizer.json</span>         <span class="c"># copied from source</span>
+└── <span class="f">config.json</span>            <span class="c"># HF model config</span>
+      </div>
+    </div>
+    <div class="card tight">
+      <h3>What the runtime needs</h3>
+      <p>Either: a custom NPU kernel that consumes the packed INT4/2/1 layout directly (the speedup case), <em>or</em> the verification path &mdash; <code>dequantize_blockwise()</code> reconstructs a dense fp32 weight tensor that loads into any HF model with zero code change.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">06</span>Numbers (measured, synthetic data)</h2>
+    <p class="sub">All forward-pass deltas are FP32 roundoff. ICS is mathematically exact; the residual is numerical noise.</p>
+    <div class="stat-row">
+      <div class="stat">
+        <div class="stat-num">3.7&times;10<sup>&minus;9</sup></div>
+        <div class="stat-label">Max abs diff through full transformer block</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">10/10</div>
+        <div class="stat-label">Algorithm correctness tests</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">2/2</div>
+        <div class="stat-label">Pipeline end-to-end smoke tests</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">~3&times;</div>
+        <div class="stat-label">Compression vs BF16 (27B estimate)</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 36px;">Forward-pass preservation (lower is better, log scale)</h3>
+    <div class="card tight">
+      <div class="bench"><span class="bench-label">chain identity (2-layer)</span><div class="bench-track"><div class="bench-fill" style="width:5%"></div></div><span class="bench-val">5.2&times;10<sup>&minus;6</sup></span></div>
+      <div class="bench"><span class="bench-label">MLP fan-out + down</span><div class="bench-track"><div class="bench-fill" style="width:7%"></div></div><span class="bench-val">7.6&times;10<sup>&minus;6</sup></span></div>
+      <div class="bench"><span class="bench-label">attention fan-out + o</span><div class="bench-track"><div class="bench-fill" style="width:1%"></div></div><span class="bench-val">1.4&times;10<sup>&minus;6</sup></span></div>
+      <div class="bench"><span class="bench-label">full transformer block</span><div class="bench-track"><div class="bench-fill" style="width:0.4%"></div></div><span class="bench-val">3.7&times;10<sup>&minus;9</sup></span></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">07</span>Code structure</h2>
+    <p class="sub">A small, importable package. CLI is a thin script on top.</p>
+    <div class="file-tree">
+<span class="d">ICS/</span>
+├── <span class="d">ics/</span>
+│   ├── <span class="f">fisher.py</span>           <span class="c"># activation-Fisher per channel</span>
+│   ├── <span class="f">permutation.py</span>      <span class="c"># composite, spectral, Sinkhorn-Hungarian</span>
+│   ├── <span class="f">quantize.py</span>         <span class="c"># INT4/2/1 block quantize + dequantize</span>
+│   ├── <span class="f">pipeline.py</span>         <span class="c"># chain discovery + orchestration</span>
+│   └── <span class="f">export.py</span>           <span class="c"># safetensors with perm metadata</span>
+├── <span class="d">scripts/</span>
+│   ├── <span class="f">colab_quantize_ics.py</span>  <span class="c"># entry point for gemma-4-27b on T4</span>
+│   ├── <span class="f">test_correctness.py</span>     <span class="c"># 10 algorithm tests</span>
+│   └── <span class="f">test_pipeline_smoke.py</span>  <span class="c"># end-to-end on a fake transformer</span>
+├── <span class="f">pyproject.toml</span>
+└── <span class="f">README.md</span>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2><span class="num">08</span>What it is not</h2>
+    <div class="card">
+      <h3>Not a fine-tuning framework</h3>
+      <p>The permutation is locked after calibration. Re-training the model post-ICS would diverge from the original training trajectory &mdash; that is the limit of the offline trick.</p>
+    </div>
+    <div class="card">
+      <h3>Not a perplexity competitor to GPTQ / AWQ</h3>
+      <p>ICS is a <em>topology</em> change, not a better quantizer. Combined with INT4/2/1, expect accuracy in the same ballpark as any mixed-precision block-quant scheme. The win is structural: it eliminates FABQ-RC's runtime sparse-gather.</p>
+    </div>
+    <div class="card">
+      <h3>Not a complete shipping artifact</h3>
+      <p>This repo gives you the offline permutation + the packed safetensors. The NPU-side kernel that consumes the packed INT4/2/1 layout at runtime is a separate piece of work tied to CoreML / QNN / NNAPI.</p>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <span>Isomorphic Channel Sorting &middot; v0.1.0 &middot; MIT</span>
+    <span>Built for mobile NPU deployment of large language models</span>
+  </footer>
+
+</div>
+</body>
+</html>
