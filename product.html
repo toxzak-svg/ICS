@@ -497,6 +497,14 @@ y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
     <span class="k">--output</span> ./gemma-4-27b-ics \
     <span class="k">--max-calibration-samples</span> 64 \
     <span class="k">--max-calibration-length</span>  256</pre>
+<pre><span class="c"># Local CPU smoke, Qwen3-0.6B cached snapshot</span>
+python scripts/run_qwen3_06b_pipeline.py \
+    <span class="k">--local-files-only</span> \
+    <span class="k">--offline</span> \
+    <span class="k">--max-calibration-samples</span> 1 \
+    <span class="k">--max-calibration-length</span>  8 \
+    <span class="k">--max-chains</span> 1 \
+    <span class="k">--no-save</span></pre>
     </div>
     <div class="card tight">
       <h3>What lands on disk</h3>
@@ -530,12 +538,12 @@ y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
         <div class="stat-label">Algorithm correctness tests</div>
       </div>
       <div class="stat">
-        <div class="stat-num">2/2</div>
-        <div class="stat-label">Pipeline end-to-end smoke tests</div>
+        <div class="stat-num">7/7</div>
+        <div class="stat-label">Pipeline + Fisher smoke tests</div>
       </div>
       <div class="stat">
-        <div class="stat-num">~3&times;</div>
-        <div class="stat-label">Compression vs BF16 (27B estimate)</div>
+        <div class="stat-num">1/2</div>
+        <div class="stat-label">Qwen3-0.6B smoke chain quantized</div>
       </div>
     </div>
 
@@ -545,7 +553,9 @@ y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
       <div class="bench"><span class="bench-label">MLP fan-out + down</span><div class="bench-track"><div class="bench-fill" style="width:7%"></div></div><span class="bench-val">7.6&times;10<sup>&minus;6</sup></span></div>
       <div class="bench"><span class="bench-label">attention fan-out + o</span><div class="bench-track"><div class="bench-fill" style="width:1%"></div></div><span class="bench-val">1.4&times;10<sup>&minus;6</sup></span></div>
       <div class="bench"><span class="bench-label">full transformer block</span><div class="bench-track"><div class="bench-fill" style="width:0.4%"></div></div><span class="bench-val">3.7&times;10<sup>&minus;9</sup></span></div>
+      <div class="bench"><span class="bench-label">Qwen3-0.6B local smoke</span><div class="bench-track"><div class="bench-fill" style="width:12%"></div></div><span class="bench-val">1 perm / 2 layers</span></div>
     </div>
+    <p class="sub" style="margin-top: 18px;">Perplexity benchmarking is the next harness: load baseline and ICS-dequantized weights, then compare fixed-dataset logits. The packed export is storage metadata until a runtime kernel consumes it directly.</p>
   </section>
 
   <section class="section">
@@ -561,8 +571,10 @@ y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
 │   └── <span class="f">export.py</span>           <span class="c"># safetensors with perm metadata</span>
 ├── <span class="d">scripts/</span>
 │   ├── <span class="f">colab_quantize_ics.py</span>  <span class="c"># entry point for gemma-4-27b on T4</span>
+│   ├── <span class="f">run_qwen3_06b_pipeline.py</span> <span class="c"># local Qwen smoke runner</span>
 │   ├── <span class="f">test_correctness.py</span>     <span class="c"># 10 algorithm tests</span>
-│   └── <span class="f">test_pipeline_smoke.py</span>  <span class="c"># end-to-end on a fake transformer</span>
+│   ├── <span class="f">test_gqa.py</span>             <span class="c"># Qwen-style GQA checks</span>
+│   └── <span class="f">test_pipeline_smoke.py</span>  <span class="c"># pipeline + Fisher regressions</span>
 ├── <span class="f">pyproject.toml</span>
 └── <span class="f">README.md</span>
     </div>
@@ -576,7 +588,7 @@ y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
     </div>
     <div class="card">
       <h3>Not a perplexity competitor to GPTQ / AWQ</h3>
-      <p>ICS is a <em>topology</em> change, not a better quantizer. Combined with INT4/2/1, expect accuracy in the same ballpark as any mixed-precision block-quant scheme. The win is structural: it eliminates FABQ-RC's runtime sparse-gather.</p>
+      <p>ICS is a <em>topology</em> change, not a better quantizer. Combined with INT4/2/1, expect accuracy in the same ballpark as any mixed-precision block-quant scheme. Qwen3-0.6B now runs through a real tokenizer smoke path; full perplexity comparison still needs a baseline-vs-dequantized benchmark harness.</p>
     </div>
     <div class="card">
       <h3>Not a complete shipping artifact</h3>

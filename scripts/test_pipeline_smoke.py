@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 import torch.nn as nn
 
-from ics.pipeline import discover_chains, apply_chain, LinearChainSpec
+from ics.pipeline import discover_chains, apply_chain, LinearChainSpec, select_chains
 from ics.permutation import find_permutation_composite, PermutationResult
-from ics.fisher import FisherStats
+from ics.fisher import FisherStats, compute_fisher
 
 
 class TinyAttention(nn.Module):
@@ -46,6 +46,37 @@ class TinyModel(nn.Module):
     def __init__(self, n_layers=2):
         super().__init__()
         self.layers = nn.ModuleList([TinyBlock() for _ in range(n_layers)])
+
+
+class TinyTokenizer:
+    def __call__(self, text, return_tensors="pt", truncation=True, max_length=512):
+        ids = [ord(ch) % 16 for ch in text][:max_length]
+        if len(ids) < 2:
+            ids = ids + [1] * (2 - len(ids))
+        input_ids = torch.tensor([ids], dtype=torch.long)
+        attention_mask = torch.ones_like(input_ids)
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class EmptyTokenizer:
+    def __call__(self, text, return_tensors="pt", truncation=True, max_length=512):
+        input_ids = torch.empty((1, 0), dtype=torch.long)
+        attention_mask = torch.empty((1, 0), dtype=torch.long)
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class TinyCausalLM(nn.Module):
+    def __init__(self, hidden=8, vocab=16):
+        super().__init__()
+        self.embed = nn.Embedding(vocab, hidden)
+        self.proj = nn.Linear(hidden, hidden)
+        self.lm_head = nn.Linear(hidden, vocab)
+
+    def forward(self, input_ids, attention_mask=None, use_cache=False):
+        x = self.embed(input_ids)
+        x = torch.tanh(self.proj(x))
+        logits = self.lm_head(x)
+        return type("TinyOutput", (), {"logits": logits})
 
 
 def test_discover_chains():
@@ -138,6 +169,93 @@ def test_apply_chain_preserves_forward():
     assert diff < 1e-3, f"forward diverged by {diff}"
 
 
+def test_compute_fisher_accumulates_nonzero_gradients():
+    """compute_fisher captures gradients from the real loss graph."""
+    torch.manual_seed(0)
+    model = TinyCausalLM()
+    fisher = compute_fisher(
+        model,
+        TinyTokenizer(),
+        ["abcde", "fghij"],
+        layer_filter=lambda name, mod: name == "proj",
+        max_length=8,
+        device="cpu",
+        show_progress=False,
+    )
+
+    assert "proj" in fisher
+    assert fisher["proj"].n_samples > 0
+    total = fisher["proj"].fisher.sum().item()
+    print(f"  fisher sum: {total:.3e}")
+    assert total > 0.0, "expected nonzero Fisher from retained output gradients"
+
+
+def test_select_chains_limits_and_filters_by_member_name():
+    model = TinyModel(n_layers=2)
+    chains = discover_chains(model, skip_modules=("embed", "norm", "lm_head"))
+
+    selected = select_chains(chains, name_filters=("mlp",), max_chains=1)
+
+    assert len(selected) == 1
+    assert selected[0].kind == "fan_out_chain"
+    assert all(".mlp." in member for member in selected[0].members)
+
+
+def test_compute_fisher_rejects_empty_tokenization():
+    model = TinyCausalLM()
+    try:
+        compute_fisher(
+            model,
+            EmptyTokenizer(),
+            ["abcde"],
+            layer_filter=lambda name, mod: name == "proj",
+            device="cpu",
+            show_progress=False,
+        )
+    except ValueError as exc:
+        assert "at least 2 tokens" in str(exc)
+    else:
+        raise AssertionError("expected compute_fisher to reject empty tokenization")
+
+
+def test_compute_fisher_supports_last_logit_mean_loss():
+    torch.manual_seed(0)
+    model = TinyCausalLM()
+    fisher = compute_fisher(
+        model,
+        TinyTokenizer(),
+        ["abcde"],
+        layer_filter=lambda name, mod: name == "proj",
+        max_length=8,
+        device="cpu",
+        show_progress=False,
+        loss_mode="last_logit_mean",
+    )
+
+    assert fisher["proj"].n_samples > 0
+    assert fisher["proj"].fisher.sum().item() > 0.0
+
+
+def test_compute_fisher_does_not_accumulate_parameter_gradients():
+    model = TinyCausalLM()
+    before = {name: param.requires_grad for name, param in model.named_parameters()}
+
+    compute_fisher(
+        model,
+        TinyTokenizer(),
+        ["abcde"],
+        layer_filter=lambda name, mod: name == "proj",
+        max_length=8,
+        device="cpu",
+        show_progress=False,
+        loss_mode="last_logit_mean",
+    )
+
+    after = {name: param.requires_grad for name, param in model.named_parameters()}
+    assert after == before
+    assert all(param.grad is None for param in model.parameters())
+
+
 def main() -> int:
     print("=" * 60)
     print("ICS pipeline smoke tests")
@@ -145,6 +263,11 @@ def main() -> int:
     tests = [
         ("discover_chains", test_discover_chains),
         ("apply_chain_preserves_forward", test_apply_chain_preserves_forward),
+        ("compute_fisher_accumulates_nonzero_gradients", test_compute_fisher_accumulates_nonzero_gradients),
+        ("select_chains_limits_and_filters_by_member_name", test_select_chains_limits_and_filters_by_member_name),
+        ("compute_fisher_rejects_empty_tokenization", test_compute_fisher_rejects_empty_tokenization),
+        ("compute_fisher_supports_last_logit_mean_loss", test_compute_fisher_supports_last_logit_mean_loss),
+        ("compute_fisher_does_not_accumulate_parameter_gradients", test_compute_fisher_does_not_accumulate_parameter_gradients),
     ]
     failures = []
     for name, fn in tests:
