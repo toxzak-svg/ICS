@@ -1,0 +1,32 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "benchmark_type": "local smoke perplexity",
+  "date": "2026-06-20",
+  "command": "python scripts/benchmark_perplexity.py --local-files-only --offline --dtype fp16 --max-eval-tokens 128 --max-calibration-samples 1 --max-calibration-length 8 --max-chains 1 --q4-gguf <qwen3-0.6b-q4_k_m.gguf> --llama-ctx 16 --output-json perplexity_results_qwen3_06b.json",
+  "notes": [
+    "Tiny built-in eval text; not a reportable WikiText-2 score.",
+    "ICS result is a one-chain dequantized smoke artifact, not full-model ICS.",
+    "Q4_K_M was evaluated with llama.cpp llama-perplexity using one 16-token chunk."
+  ],
+  "results": [
+    {
+      "name": "fp16",
+      "perplexity": 92.9362,
+      "token_count": 49,
+      "seconds": 9.3
+    },
+    {
+      "name": "ics_dequantized",
+      "perplexity": 4702612.563,
+      "token_count": 49,
+      "seconds": 8.9,
+      "note": "2 dequantized tensors loaded; 309 base tensors unchanged"
+    },
+    {
+      "name": "q4_k_m",
+      "perplexity": 216.8099,
+      "token_count": 16,
+      "seconds": 1.6
+    }
+  ]
+}

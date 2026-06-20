@@ -160,14 +160,41 @@ $X(W_A P^T)(P W_B) = X W_A W_B$ is exact.
 
 ## Benchmark status
 
-Perplexity benchmarking is the next harness to add. The Qwen smoke runner proves
-that the real model, tokenizer, Fisher pass, chain permutation, and mixed-bit
-quantization path execute. A meaningful perplexity report still needs a dense
-verification loader that applies `dequantized_state_dict()` back into a model,
-then compares baseline vs ICS-dequantized logits on a fixed dataset such as
-WikiText-2. The packed safetensors alone are a storage/export artifact; they are
-not a standalone inference runtime until an NPU kernel consumes the packed
-layout directly.
+`scripts/benchmark_perplexity.py` compares:
+
+- Hugging Face dense baseline (`--dtype fp16`, `bf16`, or `fp32`)
+- ICS-dequantized weights loaded back into the HF model
+- llama.cpp `Q4_K_M` GGUF via `llama-perplexity`
+
+Tiny local smoke command:
+
+```bash
+python scripts/benchmark_perplexity.py \
+    --local-files-only \
+    --offline \
+    --dtype fp16 \
+    --max-eval-tokens 128 \
+    --max-calibration-samples 1 \
+    --max-calibration-length 8 \
+    --max-chains 1 \
+    --q4-gguf <qwen3-0.6b-q4_k_m.gguf> \
+    --llama-ctx 16 \
+    --output-json perplexity_results_qwen3_06b.json
+```
+
+Current tiny smoke result is recorded in
+`benchmarks/qwen3_06b_perplexity_smoke.json`:
+
+| model | perplexity | tokens | note |
+| --- | ---: | ---: | --- |
+| fp16 | 92.9362 | 49 | HF dense baseline |
+| ics_dequantized | 4702612.5630 | 49 | one-chain smoke artifact; not full-model ICS |
+| q4_k_m | 216.8099 | 16 | llama.cpp Q4_K_M GGUF |
+
+These are not reportable WikiText-2 numbers. They use the built-in tiny eval
+text so the harness can complete on CPU. For meaningful reporting, pass a fixed
+dataset text file with `--eval-text-file`, raise `--max-eval-tokens`, and run a
+full-model ICS artifact instead of the one-chain smoke artifact.
 
 ## Caveats / honest gaps
 

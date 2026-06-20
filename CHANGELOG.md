@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Saved quantization dimension metadata in exports so dequantization can reconstruct row- and column-quantized tensors correctly.
 - Added Qwen tokenizer loading guidance and verified the real tokenizer path with a one-chain Qwen3-0.6B pipeline smoke run.
 - Expanded smoke tests for Fisher gradients, empty tokenization, chain filtering, and parameter-gradient suppression.
+- Added a perplexity benchmark harness for HF dense, ICS-dequantized, and llama.cpp Q4_K_M GGUF comparisons, plus a tiny Qwen3-0.6B smoke result.
 
 ## 2026-06-17
 
