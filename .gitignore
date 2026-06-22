@@ -2,4 +2,6 @@ __pycache__/
 *.py[cod]
 qwen3-0.6b-ics-smoke/
 qwen3-0.6b-ics-bench/
+qwen3-0.6b-ics-full/
+qwen3-0.6b-ics-full-int4/
 perplexity_results*.json

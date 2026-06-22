@@ -160,6 +160,9 @@ def ensure_ics_output(args: argparse.Namespace, model_path: str, tokenizer) -> P
     model = load_hf_model(model_path, _dtype_from_arg(args.dtype), args.device, args.local_files_only)
     config = ICSConfig(
         block_size=args.ics_block_size,
+        int4_fraction=args.int4_fraction,
+        int2_fraction=args.int2_fraction,
+        int1_fraction=args.int1_fraction,
         calibration_texts=DEFAULT_CALIBRATION[: args.max_calibration_samples],
         max_calibration_length=args.max_calibration_length,
         chain_name_filters=tuple(args.chain_filter),
@@ -260,6 +263,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chain-filter", action="append", default=[])
     parser.add_argument("--fisher-loss-mode", default="last_logit_mean", choices=["cross_entropy", "last_logit_mean"])
     parser.add_argument("--ics-block-size", type=int, default=64)
+    parser.add_argument("--int4-fraction", type=float, default=0.5)
+    parser.add_argument("--int2-fraction", type=float, default=0.4)
+    parser.add_argument("--int1-fraction", type=float, default=0.1)
     parser.add_argument("--q4-gguf")
     parser.add_argument("--llama-perplexity", default="llama-perplexity")
     parser.add_argument("--llama-ctx", type=int, default=256)

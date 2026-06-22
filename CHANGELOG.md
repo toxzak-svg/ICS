@@ -15,3 +15,8 @@ All notable changes to this project will be documented in this file.
 ## 2026-06-17
 
 Daily backup: 9 files changed (0 modified, 9 added, 0 deleted).
+
+## 2026-06-21
+
+- Daily auto-sync: refreshed .gitignore; updated scripts/benchmark_perplexity.py; added .env.example, colab_hf_github_pipeline.ipynb, enchmarks/qwen3_06b_full_quant_ppl.json, local Qwen eval transcript, and ssh_tunnels_and_how_to_dig_them (1).ipynb.
+

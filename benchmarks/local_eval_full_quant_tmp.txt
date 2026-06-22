@@ -1,0 +1,85 @@
+Transformer models process text by mapping tokens into vectors, mixing those
+vectors with attention, and then projecting the result back into a vocabulary
+distribution. A perplexity benchmark measures how much probability the model
+assigns to the next token in a held out sequence. Lower perplexity means the
+model was less surprised by the text. The metric is useful for comparing
+different weight formats when the prompt, tokenizer, context length, and loss
+calculation are held fixed.
+
+Quantization changes the numerical representation of weights. A dense half
+precision model stores each weight with sixteen bits, while a four bit
+quantized model stores most weight values with far fewer bits plus scale
+metadata. The benefit is lower memory use and often faster loading. The risk is
+that rounding error can shift logits enough to hurt next token prediction.
+Perplexity is a compact way to expose that loss.
+
+Isomorphic Channel Sorting is different from ordinary post training
+quantization. It permutes compatible channel dimensions before quantizing, so
+important channels and weight outliers land in blocks that receive more
+precision. The permutation is baked into adjacent weights. At runtime there is
+no sparse residual stream and no dynamic gather. The model reads a contiguous
+packed tensor. The quality question is whether the offline permutation and the
+mixed bit quantizer preserve enough of the original distribution.
+
+This benchmark text is intentionally plain. It contains short technical
+sentences about transformers, quantization, calibration, and evaluation. The
+goal is not to claim a leaderboard number. The goal is to run the same text
+through several model representations and catch obvious breakage. A full report
+should use a standard corpus, a fixed tokenizer, more tokens, and identical
+context window settings across all backends.
+
+Calibration data should resemble the distribution being evaluated. If the
+calibration set is too small, Fisher estimates can be noisy. If only part of a
+model is quantized, the result is not representative of a full deployment. If
+grouped query attention is permuted without respecting head grouping, quality
+can drop sharply. Those cases should be visible in perplexity before any
+runtime performance claims are made.
+
+A practical mobile deployment cares about more than perplexity. It also cares
+about model size, memory bandwidth, startup time, token latency, and kernel
+availability. A compact packed tensor is useful only if the runtime can consume
+it efficiently. A dense dequantized verification path is useful for debugging,
+but it is not the final deployment path.
+
+The evaluation loop sums cross entropy over predicted next tokens. The same
+input text is tokenized once for the dense model path. The quantized GGUF path
+uses llama.cpp tokenization and its perplexity utility, so exact token counts
+may differ. This is acceptable for a smoke comparison but must be tightened for
+a formal report.
+
+The expected baseline behavior is straightforward. The dense model should have
+the lowest perplexity among lossy formats. A strong four bit quantized model
+should be close to the dense baseline on ordinary text. A broken or partial
+quantization path can produce very high perplexity, nonfinite logits, or
+runtime errors. Those failures are useful because they point directly at the
+part of the pipeline that still needs engineering work.
+
+Transformer models process text by mapping tokens into vectors, mixing those
+vectors with attention, and then projecting the result back into a vocabulary
+distribution. A perplexity benchmark measures how much probability the model
+assigns to the next token in a held out sequence. Lower perplexity means the
+model was less surprised by the text. The metric is useful for comparing
+different weight formats when the prompt, tokenizer, context length, and loss
+calculation are held fixed.
+
+Quantization changes the numerical representation of weights. A dense half
+precision model stores each weight with sixteen bits, while a four bit
+quantized model stores most weight values with far fewer bits plus scale
+metadata. The benefit is lower memory use and often faster loading. The risk is
+that rounding error can shift logits enough to hurt next token prediction.
+Perplexity is a compact way to expose that loss.
+
+Isomorphic Channel Sorting is different from ordinary post training
+quantization. It permutes compatible channel dimensions before quantizing, so
+important channels and weight outliers land in blocks that receive more
+precision. The permutation is baked into adjacent weights. At runtime there is
+no sparse residual stream and no dynamic gather. The model reads a contiguous
+packed tensor. The quality question is whether the offline permutation and the
+mixed bit quantizer preserve enough of the original distribution.
+
+This benchmark text is intentionally plain. It contains short technical
+sentences about transformers, quantization, calibration, and evaluation. The
+goal is not to claim a leaderboard number. The goal is to run the same text
+through several model representations and catch obvious breakage. A full report
+should use a standard corpus, a fixed tokenizer, more tokens, and identical
+context window settings across all backends.
