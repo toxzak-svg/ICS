@@ -238,7 +238,10 @@ def test_compute_fisher_supports_last_logit_mean_loss():
 
 def test_compute_fisher_does_not_accumulate_parameter_gradients():
     model = TinyCausalLM()
-    before = {name: param.requires_grad for name, param in model.named_parameters()}
+    # Switch the model to eval mode and ensure compute_fisher restores this setting.
+    model.eval()
+    before_training = model.training
+    before_requires_grad = {name: param.requires_grad for name, param in model.named_parameters()}
 
     compute_fisher(
         model,
@@ -251,8 +254,11 @@ def test_compute_fisher_does_not_accumulate_parameter_gradients():
         loss_mode="last_logit_mean",
     )
 
-    after = {name: param.requires_grad for name, param in model.named_parameters()}
-    assert after == before
+    after_training = model.training
+    after_requires_grad = {name: param.requires_grad for name, param in model.named_parameters()}
+
+    assert after_requires_grad == before_requires_grad
+    assert after_training == before_training
     assert all(param.grad is None for param in model.parameters())
 
 
