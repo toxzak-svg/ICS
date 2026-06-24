@@ -2,10 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-06-24
+
+Daily sync.
+
+
 ## 2026-06-23
 
 Daily sync.
 
+
+
+## 2026-06-24
+
+Daily sync.
 
 
 ## 2026-06-20
@@ -18,9 +28,19 @@ Daily sync.
 - Expanded smoke tests for Fisher gradients, empty tokenization, chain filtering, and parameter-gradient suppression.
 - Added a perplexity benchmark harness for HF dense, ICS-dequantized, and llama.cpp Q4_K_M GGUF comparisons, plus a tiny Qwen3-0.6B smoke result.
 
+## 2026-06-24
+
+Daily sync.
+
+
 ## 2026-06-17
 
 Daily backup: 9 files changed (0 modified, 9 added, 0 deleted).
+
+## 2026-06-24
+
+Daily sync.
+
 
 ## 2026-06-21
 
