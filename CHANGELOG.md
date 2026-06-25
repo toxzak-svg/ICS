@@ -1,3 +1,13 @@
+﻿## 2026-06-25
+
+Daily sync.
+
+- **`ics/pipeline.py`** (+221/-X): pipeline expansion (new stages, expanded surface).
+- **`ics/export.py`** (+86/-X): export pipeline additions (likely row/col quant metadata handling).
+- **`ics/permutation.py`** (+6/-X): small refactor.
+- New module **`ics/gptq.py`** — GPTQ quantization support.
+- New directories **`colab_bridge/`**, **`colab_MiniMax/`** — Colab integration assets (likely for remote quant runs).
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

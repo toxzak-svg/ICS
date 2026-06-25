@@ -57,6 +57,10 @@ class ICSConfig:
     int4_fraction: float = 0.5
     int2_fraction: float = 0.4
     int1_fraction: float = 0.1
+    quant_method: str = "block"  # "block" (per-block INT) or "gptq" (Hessian-based)
+    gptq_group_size: int = 128    # GPTQ: number of columns per scale group
+    gptq_percdamp: float = 0.01   # GPTQ: relative Hessian damping
+    gptq_blocksize: int = 128     # GPTQ: process this many columns at a time
     alpha: float = 1.0
     beta: float = 1.0
     method: str = "composite"
@@ -124,6 +128,8 @@ class ICSResult:
     bit_widths: dict[str, torch.Tensor]
     fisher: dict[str, FisherStats]
     config: ICSConfig
+    layer_perms: dict[str, torch.Tensor] = field(default_factory=dict)  # GPTQ column perms
+    chain_members: dict[str, dict] = field(default_factory=dict)  # chain -> {members, targets, permutation}
 
 
 def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[LinearChainSpec]:
@@ -335,6 +341,49 @@ def _set_module(model: nn.Module, name: str, new_mod: nn.Module) -> None:
     setattr(parent, parts[-1], new_mod)
 
 
+def _dequantize_bnb_inplace(model: nn.Module) -> int:
+    """Replace bnb Linear4bit layers with regular nn.Linear holding the dequantized weight.
+
+    The pipeline's chain discovery + permutation + quantization code assumes regular
+    tensor weights with .shape = (out_features, in_features). bnb 4-bit stores weights
+    in a packed uint8 layout of shape (packed_size, 1), which breaks the shape-based
+    chain logic.
+
+    The 4-bit loading is only for Fisher-time VRAM savings (so a 27B model fits on a
+    15GB T4). Once Fisher is done, we dequantize to fp16/bf16 and proceed normally.
+    The save_ics_model output is the QUANTIZED form anyway, so the bnb wrapping
+    has no effect on disk output.
+
+    Returns the number of layers dequantized.
+    """
+    try:
+        import bitsandbytes as bnb
+    except ImportError:
+        return 0
+
+    n = 0
+    # Iterate over a snapshot so we can mutate the module tree in place.
+    for name, mod in list(model.named_modules()):
+        if not isinstance(mod, bnb.nn.Linear4bit):
+            continue
+        # Dequantize the 4-bit weight to bfloat16/float16 (matches bnb_4bit_compute_dtype).
+        W = bnb.functional.dequantize_4bit(mod.weight.data, mod.weight.quant_state)
+        # Build a regular nn.Linear with the dequantized weight on the same device.
+        new = nn.Linear(
+            in_features=mod.in_features,
+            out_features=mod.out_features,
+            bias=mod.bias is not None,
+            device=W.device,
+            dtype=W.dtype,
+        )
+        new.weight.data = W.contiguous().to(W.dtype)
+        if mod.bias is not None:
+            new.bias.data = mod.bias.data.detach().clone().to(W.dtype)
+        _set_module(model, name, new)
+        n += 1
+    return n
+
+
 def _apply_perm_to_weight(
     weight: torch.Tensor,
     perm: torch.Tensor,
@@ -463,6 +512,30 @@ def quantize_model(
     if show_progress:
         print(f"      computed Fisher for {len(fisher)} layers", flush=True)
 
+    # Dequantize bnb 4-bit weights back to regular nn.Linear so the rest of the
+    # pipeline (chain discovery, perm, quant, apply) sees a normal weight shape.
+    # Fisher is done; we no longer need the 4-bit memory savings.
+    n_dequant = _dequantize_bnb_inplace(model)
+    if show_progress and n_dequant:
+        # Find a representative dequantized dtype
+        dt = next((m.weight.dtype for m in model.modules()
+                   if isinstance(m, nn.Linear) and m.weight is not None and m.weight.dtype.is_floating_point),
+                  torch.bfloat16)
+        print(f"      dequantized {n_dequant} bnb 4-bit layers to {dt}", flush=True)
+
+    # Re-discover chains on the dequantized model so shared_dim_size reflects
+    # the real (out_features, in_features) shapes, not the bnb packed layout.
+    # The chain member names are unchanged, only the dim metadata is corrected.
+    if n_dequant:
+        chains = discover_chains(model, skip_modules=config.skip_modules)
+        chains = select_chains(
+            chains,
+            name_filters=config.chain_name_filters,
+            max_chains=config.max_chains,
+        )
+        if show_progress:
+            print(f"      re-discovered {len(chains)} chains on dequantized model", flush=True)
+
     # Convert to normalized per-channel tensors
     fisher_norm: dict[str, torch.Tensor] = {}
     for name, fs in fisher.items():
@@ -472,6 +545,7 @@ def quantize_model(
     if show_progress:
         print("[3/5] Finding permutations...", flush=True)
     perms: dict[str, PermutationResult] = {}
+    chain_members: dict[str, dict] = {}
     for i, chain in enumerate(chains):
         F = fisher_norm[chain.fisher_source]
         shared = chain.shared_dim_size
@@ -512,6 +586,11 @@ def quantize_model(
 
         key = "/".join(chain.members)
         perms[key] = perm
+        chain_members[key] = {
+            "members": list(chain.members),
+            "targets": list(chain.perm_targets),
+            "permutation": perm.permutation.cpu().tolist(),
+        }
         if show_progress and (i + 1) % 4 == 0:
             print(f"      {i + 1}/{len(chains)} chains sorted", flush=True)
 
@@ -526,37 +605,119 @@ def quantize_model(
         print("[5/5] Quantizing layers...", flush=True)
     quant: dict[str, QuantizedTensor] = {}
     bit_widths: dict[str, torch.Tensor] = {}
-    for chain in chains:
-        chain_F = fisher_norm[chain.fisher_source]
-        shared = chain.shared_dim_size
-        if chain_F.shape[0] > shared:
-            chain_F = chain_F[:shared]
-        for n, target in zip(chain.members, chain.perm_targets):
-            if n in quant:
+    layer_perms: dict[str, torch.Tensor] = {}  # GPTQ column perm per layer
+
+    if config.quant_method == "gptq":
+        # GPTQ path: compute per-layer Hessian, then quantize column-by-column.
+        from ics.gptq import compute_layer_hessian, gptq_quantize
+        from ics.quantize import QuantizedTensor
+
+        if show_progress:
+            print("      computing per-layer Hessian on calibration data...", flush=True)
+        # Build calibration batches once; reuse for Hessian.
+        calib_batches = []
+        for text in config.calibration_texts:
+            enc = tokenizer(text, return_tensors="pt", truncation=True, max_length=config.max_calibration_length)
+            if enc["input_ids"].shape[-1] < 2:
                 continue
-            mod = _get_module(model, n)
-            if not isinstance(mod, nn.Linear):
-                continue  # Skip non-Linear (e.g. Conv1d) for quantization
-            W = mod.weight.detach().float().cpu()
-            if target == 0 and n in fisher_norm and fisher_norm[n].shape[0] == W.shape[0]:
-                F = fisher_norm[n]
-            else:
-                F = chain_F
-            if F.shape[0] != W.shape[target]:
-                raise ValueError(
-                    f"Fisher length {F.shape[0]} does not match quant dim {target} "
-                    f"size {W.shape[target]} for layer {n}"
+            calib_batches.append({k: v.to(device) for k, v in enc.items()})
+        layer_hessians = compute_layer_hessian(
+            model,
+            calib_batches,
+            layer_filter=lambda n, m: any(n in c.members for c in chains),
+            device=device,
+        )
+        if show_progress:
+            print(f"      Hessians for {len(layer_hessians)} layers", flush=True)
+
+        for chain in chains:
+            for n, target in zip(chain.members, chain.perm_targets):
+                if n in quant:
+                    continue
+                mod = _get_module(model, n)
+                if not isinstance(mod, nn.Linear):
+                    continue
+                W = mod.weight.detach().float().cpu()
+                if n not in layer_hessians:
+                    continue
+                H = layer_hessians[n].to(W.device)
+                Q, scales, zeros, gptq_perm = gptq_quantize(
+                    W, H,
+                    bits=4,
+                    group_size=config.gptq_group_size,
+                    percdamp=config.gptq_percdamp,
+                    blocksize=config.gptq_blocksize,
                 )
-            bits = assign_bit_widths(
-                F,
-                block_size=config.block_size,
-                int4_fraction=config.int4_fraction,
-                int2_fraction=config.int2_fraction,
-                int1_fraction=config.int1_fraction,
-            )
-            qt = quantize_blockwise(W, bits, block_size=config.block_size, dim=target)
-            quant[n] = qt
-            bit_widths[n] = bits
+                # Q is the GPTQ-quantized weight in GPTQ's column-permuted order.
+                # scales/zeros are per-group (group_size columns share a scale).
+                # We store Q directly in the QuantizedTensor. The dequant path
+                # (dequantize_blockwise with the stored scales) reconstructs
+                # W_perm, and the saved layer_perms[gptq_perm] reverses the
+                # column permutation to recover the original W.
+                out_features, in_features = W.shape
+                n_groups = scales.shape[0]
+                bits = torch.full((n_groups,), 4, dtype=torch.int32)
+                # Arrange Q in the "block-row-major" layout that
+                # dequantize_blockwise expects: for each group of block_size
+                # cols, store all out_features rows of that col-block in
+                # row-major, then the next group. The natural Q.reshape(-1)
+                # is "all-cols-row-major" which the dequant can't read.
+                qdata_pieces = []
+                group_size = in_features // n_groups
+                for g in range(n_groups):
+                    start = g * group_size
+                    end = (g + 1) * group_size
+                    block_q = Q[:, start:end].contiguous().reshape(-1)
+                    qdata_pieces.append(block_q)
+                qdata_flat = torch.cat(qdata_pieces).cpu()
+                qt = QuantizedTensor(
+                    qdata=qdata_flat,
+                    scales=scales.cpu(),
+                    zeros=zeros.cpu(),
+                    bits=bits,
+                    block_size=config.gptq_group_size,
+                    original_shape=(out_features, in_features),
+                    quant_dim=1,  # columns
+                    method="gptq_per_group",
+                )
+                quant[n] = qt
+                bit_widths[n] = bits
+                layer_perms[n] = gptq_perm
+        if show_progress:
+            print(f"      GPTQ quantized {len(quant)} layers", flush=True)
+    else:
+        # Original per-block path.
+        for chain in chains:
+            chain_F = fisher_norm[chain.fisher_source]
+            shared = chain.shared_dim_size
+            if chain_F.shape[0] > shared:
+                chain_F = chain_F[:shared]
+            for n, target in zip(chain.members, chain.perm_targets):
+                if n in quant:
+                    continue
+                mod = _get_module(model, n)
+                if not isinstance(mod, nn.Linear):
+                    continue  # Skip non-Linear (e.g. Conv1d) for quantization
+                W = mod.weight.detach().float().cpu()
+                if target == 0 and n in fisher_norm and fisher_norm[n].shape[0] == W.shape[0]:
+                    F = fisher_norm[n]
+                else:
+                    F = chain_F
+                if F.shape[0] != W.shape[target]:
+                    raise ValueError(
+                        f"Fisher length {F.shape[0]} does not match quant dim {target} "
+                        f"size {W.shape[target]} for layer {n}"
+                    )
+                bits = assign_bit_widths(
+                    F,
+                    block_size=config.block_size,
+                    int4_fraction=config.int4_fraction,
+                    int2_fraction=config.int2_fraction,
+                    int1_fraction=config.int1_fraction,
+                )
+                qt = quantize_blockwise(W, bits, block_size=config.block_size, dim=target)
+                quant[n] = qt
+                bit_widths[n] = bits
 
     return ICSResult(
         perms=perms,
@@ -564,4 +725,6 @@ def quantize_model(
         bit_widths=bit_widths,
         fisher=fisher,
         config=config,
+        layer_perms=layer_perms,
+        chain_members=chain_members,
     )

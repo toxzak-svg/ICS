@@ -212,7 +212,11 @@ def find_permutation_composite(
     M_A = _per_output_channel_norm(W_A).to(torch.float32)  # [out_A] = W_A's per-output-channel max
     M_B = _per_input_channel_norm(W_B).to(torch.float32)   # [in_B]  = W_B's per-input-channel max
 
-    score = F.to(torch.float32) * (alpha * M_A + beta * M_B + 1e-12)
+    # Bridge device mismatch: Fisher is often offloaded to CPU (see pipeline.py),
+    # but the weight-derived norms live on whatever device the model is on.
+    F = F.to(device=M_A.device, dtype=torch.float32)
+
+    score = F * (alpha * M_A + beta * M_B + 1e-12)
     perm = torch.argsort(score, descending=descending)
 
     return PermutationResult(

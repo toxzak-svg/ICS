@@ -69,8 +69,11 @@ def save_ics_model(
         "int2_fraction": result.config.int2_fraction,
         "int1_fraction": result.config.int1_fraction,
         "method": result.config.method,
+        "quant_method": result.config.quant_method,
+        "gptq_group_size": result.config.gptq_group_size,
         "layers": {},
         "permutations": {},
+        "layer_perms": {},  # GPTQ column permutations per layer
     }
 
     for layer_name, qt in result.quant.items():
@@ -86,6 +89,11 @@ def save_ics_model(
             "quant_dim": qt.quant_dim,
             "method": qt.method,
         }
+        if layer_name in result.layer_perms:
+            meta["layer_perms"][layer_name] = result.layer_perms[layer_name].cpu().tolist()
+
+    # Per-layer chain perm info so dequant can un-perm.
+    meta["chain_members"] = result.chain_members
 
     for chain_key, perm in result.perms.items():
         safe = chain_key.replace(".", "__").replace("/", "_")
@@ -127,15 +135,18 @@ def load_ics_model(output_dir: str | Path) -> dict[str, Any]:
 
     # Reconstruct QuantizedTensor per layer
     layers: dict[str, QuantizedTensor] = {}
-    bs = meta["block_size"]
+    default_bs = meta["block_size"]
     for layer_name, info in meta["layers"].items():
         safe = layer_name.replace(".", "__")
+        # Per-layer block_size wins; fall back to the top-level default for
+        # backward compatibility with older artifacts.
+        per_layer_bs = info.get("block_size", default_bs)
         qt = QuantizedTensor(
             qdata=qdata[safe + ".qdata"],
             scales=scales[safe + ".scales"],
             zeros=zeros[safe + ".zeros"],
             bits=bits[safe + ".bits"],
-            block_size=bs,
+            block_size=per_layer_bs,
             original_shape=tuple(info["original_shape"]),
             quant_dim=info.get("quant_dim", -1),
             method=info["method"],
@@ -149,12 +160,79 @@ def load_ics_model(output_dir: str | Path) -> dict[str, Any]:
         "bits": bits,
         "meta": meta,
         "layers": layers,
+        "layer_perms": meta.get("layer_perms", {}),
+        "chain_members": meta.get("chain_members", {}),
     }
 
 
+def dequantize_gptq_per_group(qt) -> torch.Tensor:
+    """Dequantize a QuantizedTensor that was stored by the GPTQ path.
+
+    The GPTQ path stores the qdata in natural row-major layout
+    (out_features, in_features). The dequantize_blockwise function
+    expects a different "block-row-major" layout, so we need a
+    separate dequant path for GPTQ-stored tensors.
+    """
+    out_features, in_features = qt.original_shape
+    qdata_2d = qt.qdata.reshape(out_features, in_features).float()
+    n_groups = qt.scales.shape[0]
+    group_size = in_features // n_groups
+    W = torch.zeros((out_features, in_features), dtype=torch.float32)
+    for g in range(n_groups):
+        s = g * group_size
+        e = (g + 1) * group_size
+        W[:, s:e] = (qdata_2d[:, s:e] - float(qt.zeros[g].item())) * float(qt.scales[g].item())
+    return W
+
+
 def dequantized_state_dict(loaded: dict[str, Any]) -> dict[str, torch.Tensor]:
-    """Build a dense (dequantized) state-dict for verification loading."""
+    """Build a dense (dequantized) state-dict for verification loading.
+
+    Handles two layers of permutation:
+    1. GPTQ column permutation (if layer was GPTQ-quantized). Reverses to
+       recover the post-ICS-perm weight in its natural column order.
+    2. ICS chain permutation. The saved weights are in chain-permuted order.
+       Reversing recovers the original (unpermuted) weight.
+
+    The output state dict is suitable for loading into the original
+    (unpermuted) HF model.
+    """
     state: dict[str, torch.Tensor] = {}
+    layer_perms = loaded.get("layer_perms", {})
+    chain_members = loaded.get("chain_members", {})
+
+    # Build per-layer chain-perm lookup: layer_name -> (target, perm)
+    layer_chain_perm: dict[str, tuple[int, list[int]]] = {}
+    for chain_key, info in chain_members.items():
+        perm_list = info["permutation"]
+        for member, target in zip(info["members"], info["targets"]):
+            layer_chain_perm[member] = (target, perm_list)
+
     for layer_name, qt in loaded["layers"].items():
-        state[layer_name + ".weight"] = dequantize_blockwise(qt)
+        # All layers use dequantize_blockwise; the GPTQ path stores qdata
+        # in the same block-row-major layout that dequantize_blockwise
+        # expects (per-block: n_rows × block_size, row-major, then next block).
+        W = dequantize_blockwise(qt)
+
+        # 1. Un-perm the GPTQ column permutation (if any)
+        if layer_name in layer_perms:
+            gperm = torch.tensor(layer_perms[layer_name], dtype=torch.long)
+            W_unperm = torch.zeros_like(W)
+            W_unperm[:, gperm] = W
+            W = W_unperm
+
+        # 2. Un-perm the ICS chain permutation (if any)
+        if layer_name in layer_chain_perm:
+            target, cperm_list = layer_chain_perm[layer_name]
+            cperm = torch.tensor(cperm_list, dtype=torch.long)
+            W_unperm = torch.zeros_like(W)
+            if target == 0:
+                # Row perm: W_orig[cperm] = W
+                W_unperm[cperm] = W
+            else:
+                # Col perm: W_orig[:, cperm] = W
+                W_unperm[:, cperm] = W
+            W = W_unperm
+
+        state[layer_name + ".weight"] = W
     return state
