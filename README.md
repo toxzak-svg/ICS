@@ -75,6 +75,48 @@ python scripts/test_correctness.py
 python scripts/test_pipeline_smoke.py
 ```
 
+## Run Qwen3-0.6B locally
+
+The local Qwen runner exercises the real Hugging Face model path without
+requiring a GPU. It defaults to one calibration sample and one selected chain
+so CPU-only machines can validate the pipeline without attempting a full-model
+quantization job.
+
+First make sure the tokenizer files are cached with the model snapshot:
+
+```bash
+hf download Qwen/Qwen3-0.6B \
+    --include tokenizer.json \
+    --include tokenizer_config.json \
+    --include vocab.json \
+    --include merges.txt \
+    --include generation_config.json
+```
+
+Then run the one-chain smoke pipeline:
+
+```bash
+python scripts/run_qwen3_06b_pipeline.py \
+    --local-files-only \
+    --offline \
+    --max-calibration-samples 1 \
+    --max-calibration-length 8 \
+    --max-chains 1 \
+    --no-save
+```
+
+Expected local smoke result:
+
+- Qwen3-0.6B loads from the cached snapshot.
+- The real tokenizer returns non-empty token IDs.
+- 56 chains are discovered, 1 chain is selected.
+- Fisher, permutation, apply, and quantization complete.
+- The smoke run produces 1 permutation and 2 quantized layers.
+
+Use `--output ./qwen3-0.6b-ics-smoke` without `--no-save` to write the
+safetensors export. The runner still has `--synthetic-tokenizer` for cache-only
+debugging, but use the real tokenizer for any meaningful calibration run.
+
 ## What this codebase does
 
 | file | purpose |
@@ -85,8 +127,11 @@ python scripts/test_pipeline_smoke.py
 | `ics/pipeline.py` | chain discovery, joint perm search, application, quant orchestration |
 | `ics/export.py` | safetensors save/load with perm metadata |
 | `scripts/colab_quantize_ics.py` | end-to-end CLI: load → fisher → perm → quant → save |
+| `scripts/run_qwen3_06b_pipeline.py` | CPU-friendly Qwen3-0.6B smoke runner with offline/cache support |
 | `scripts/test_correctness.py` | 10 unit tests on synthetic data, including chain identity at FP32 noise |
-| `scripts/test_pipeline_smoke.py` | end-to-end pipeline on a 64-dim fake transformer |
+| `scripts/test_pipeline_smoke.py` | end-to-end pipeline on a 64-dim fake transformer plus Fisher regressions |
+| `scripts/test_gqa.py` | Qwen-style grouped-query attention chain discovery and apply smoke tests |
+| `scripts/test_load_qwen.py` | quick Qwen3-0.6B load and shape probe |
 
 ## Tests
 
@@ -99,16 +144,63 @@ ALL 10 TESTS PASSED
   full pipeline: forward pass max diff: 1.526e-05
 
 $ python scripts/test_pipeline_smoke.py
-ALL 2 TESTS PASSED
+ALL 7 TESTS PASSED
   end-to-end forward diff: 3.725e-09
+
+$ python scripts/test_gqa.py
+ALL 2 TESTS PASSED
+
+$ python scripts/run_qwen3_06b_pipeline.py --local-files-only --offline --max-calibration-samples 1 --max-calibration-length 8 --max-chains 1 --no-save
+[pipeline] permutations: 1
+[pipeline] quantized layers: 2
 ```
 
 The forward-pass residuals are FP32 roundoff — the math
 $X(W_A P^T)(P W_B) = X W_A W_B$ is exact.
 
+## Benchmark status
+
+`scripts/benchmark_perplexity.py` compares:
+
+- Hugging Face dense baseline (`--dtype fp16`, `bf16`, or `fp32`)
+- ICS-dequantized weights loaded back into the HF model
+- llama.cpp `Q4_K_M` GGUF via `llama-perplexity`
+
+Tiny local smoke command:
+
+```bash
+python scripts/benchmark_perplexity.py \
+    --local-files-only \
+    --offline \
+    --dtype fp16 \
+    --max-eval-tokens 128 \
+    --max-calibration-samples 1 \
+    --max-calibration-length 8 \
+    --max-chains 1 \
+    --q4-gguf <qwen3-0.6b-q4_k_m.gguf> \
+    --llama-ctx 16 \
+    --output-json perplexity_results_qwen3_06b.json
+```
+
+Current tiny smoke result is recorded in
+`benchmarks/qwen3_06b_perplexity_smoke.json`:
+
+| model | perplexity | tokens | note |
+| --- | ---: | ---: | --- |
+| fp16 | 92.9362 | 49 | HF dense baseline |
+| ics_dequantized | 4702612.5630 | 49 | one-chain smoke artifact; not full-model ICS |
+| q4_k_m | 216.8099 | 16 | llama.cpp Q4_K_M GGUF |
+
+These are not reportable WikiText-2 numbers. They use the built-in tiny eval
+text so the harness can complete on CPU. For meaningful reporting, pass a fixed
+dataset text file with `--eval-text-file`, raise `--max-eval-tokens`, and run a
+full-model ICS artifact instead of the one-chain smoke artifact.
+
 ## Caveats / honest gaps
 
 - **Activation-Fisher requires gradients.** 4-bit-loaded models need BitsAndBytes ≥ 0.43 and `model.enable_input_require_grads()`.
+- **Qwen GQA is not perfectly invariant.** Qwen3-0.6B uses grouped-query attention. The smoke path safely handles the dimensions by selecting compatible producers, but GQA head grouping means attention permutations are not the same exact-invariance story as full MHA.
+- **CPU Qwen smoke is intentionally bounded.** The local runner defaults to one chain and a low-memory Fisher objective. Full-model calibration should run on a GPU with a real calibration set.
 - **27B on T4 is tight.** If you OOM during Fisher backward, drop `--max-calibration-length` from 256 to 128 first.
 - **One-shot calibration.** The Fisher is computed once on a small text mix. For domain-specific deployments, swap `DEFAULT_CALIBRATION` in `scripts/colab_quantize_ics.py` for in-domain text.
 - **No kernel-side custom op.** The export is the dense (dequantized) layout plus the metadata needed to reconstruct the packed layout at deploy time. Wiring this to a custom NPU kernel is out of scope for this repo — that's a separate piece of work tied to CoreML/QNN/NNAPI.

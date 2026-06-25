@@ -59,8 +59,8 @@ def _register_fisher_hooks(
                 y = output[0]
             else:
                 y = output
-            y = y.detach()
-            y.requires_grad_(True)
+            if not y.requires_grad:
+                y.requires_grad_(True)
             y.retain_grad()
             activations[name] = y
             if name not in fisher_accumulators:
@@ -109,6 +109,7 @@ def compute_fisher(
     max_length: int = 512,
     device: str | torch.device = "cuda",
     show_progress: bool = True,
+    loss_mode: str = "cross_entropy",
 ) -> dict[str, FisherStats]:
     """Compute per-channel activation Fisher Information for each Linear layer.
 
@@ -132,6 +133,9 @@ def compute_fisher(
     was_training = model.training
     model.train()
     model.to(device)
+    param_requires_grad = [p.requires_grad for p in model.parameters()]
+    for p in model.parameters():
+        p.requires_grad_(False)
 
     activations, fisher_accumulators, n_samples, handles = _register_fisher_hooks(
         model, layer_filter
@@ -148,19 +152,31 @@ def compute_fisher(
             )
             input_ids = enc["input_ids"].to(device)
             attn = enc["attention_mask"].to(device)
+            if input_ids.shape[-1] < 2:
+                raise ValueError(
+                    "Fisher calibration samples must tokenize to at least 2 tokens; "
+                    f"sample {i} produced length {input_ids.shape[-1]}"
+                )
 
             # Causal LM forward
             out = model(input_ids=input_ids, attention_mask=attn, use_cache=False)
             logits = out.logits  # [B, T, V]
 
-            # Next-token cross-entropy loss (shifted)
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = input_ids[..., 1:].contiguous()
-            loss = nn.functional.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)).float(),
-                shift_labels.view(-1),
-                reduction="sum",
-            )
+            if loss_mode == "cross_entropy":
+                # Next-token cross-entropy loss (shifted)
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = input_ids[..., 1:].contiguous()
+                loss = nn.functional.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)).float(),
+                    shift_labels.view(-1),
+                    reduction="sum",
+                )
+            elif loss_mode == "last_logit_mean":
+                shift_logits = None
+                shift_labels = None
+                loss = logits[:, -1, :].float().mean()
+            else:
+                raise ValueError(f"unknown Fisher loss_mode: {loss_mode}")
 
             # Backward
             model.zero_grad(set_to_none=True)
@@ -173,10 +189,13 @@ def compute_fisher(
                 print(f"  fisher: {i + 1}/{len(calibration_texts)}", flush=True)
 
             # Detach loss graph
-            del loss, out, logits, shift_logits, shift_labels
+            del loss, out, logits
     finally:
         for h in handles:
             h.remove()
+        for p, requires_grad in zip(model.parameters(), param_requires_grad):
+            p.requires_grad_(requires_grad)
+        model.zero_grad(set_to_none=True)
         if not was_training:
             model.eval()
 

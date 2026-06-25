@@ -83,6 +83,7 @@ def save_ics_model(
         meta["layers"][layer_name] = {
             "original_shape": list(qt.original_shape),
             "block_size": qt.block_size,
+            "quant_dim": qt.quant_dim,
             "method": qt.method,
         }
 
@@ -136,6 +137,7 @@ def load_ics_model(output_dir: str | Path) -> dict[str, Any]:
             bits=bits[safe + ".bits"],
             block_size=bs,
             original_shape=tuple(info["original_shape"]),
+            quant_dim=info.get("quant_dim", -1),
             method=info["method"],
         )
         layers[layer_name] = qt

@@ -68,7 +68,13 @@ class ICSConfig:
         "embed_out",
         "norm",
         "rotary_emb",
+        "visual.",      # vision encoder (multimodal models)
+        "model.visual.", # vision encoder (full path)
+        "mtp.",          # multi-token prediction head
     )
+    chain_name_filters: tuple[str, ...] = ()
+    max_chains: int | None = None
+    fisher_loss_mode: str = "cross_entropy"
 
 
 @dataclass
@@ -131,16 +137,22 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
     ICS target: this shared dim. Producers get their rows permuted,
     the consumer gets its columns permuted. Element-wise ops (SiLU,
     *) and softmax commute with the perm.
+
+    Supports fused projections (e.g., Qwen3.5 q_proj with gate,
+    linear_attn in_proj_qkv with concatenated q/k/v) and GQA where
+    k/v have smaller output dims than q. Also handles Gated DeltaNet
+    (linear_attn) blocks found in Qwen3.5.
     """
     name_to_module: dict[str, nn.Module] = dict(model.named_modules())
     chains: list[LinearChainSpec] = []
 
-    # Group linear layers by their parent block (the .self_attn / .mlp)
+    # Group linear layers (and Conv1d in linear_attn) by parent block
     by_attn_block: dict[str, list[str]] = {}
+    by_linear_attn_block: dict[str, list[str]] = {}
     by_mlp_block: dict[str, list[str]] = {}
 
     for name, mod in name_to_module.items():
-        if not isinstance(mod, nn.Linear):
+        if not isinstance(mod, (nn.Linear, nn.Conv1d)):
             continue
         if any(s in name for s in skip_modules):
             continue
@@ -149,6 +161,10 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
             idx = parts.index("self_attn")
             block = ".".join(parts[:idx + 1])
             by_attn_block.setdefault(block, []).append(name)
+        elif "linear_attn" in parts:
+            idx = parts.index("linear_attn")
+            block = ".".join(parts[:idx + 1])
+            by_linear_attn_block.setdefault(block, []).append(name)
         elif "mlp" in parts:
             idx = parts.index("mlp")
             block = ".".join(parts[:idx + 1])
@@ -156,33 +172,102 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
 
     # Attention block: q/k/v fan out on output dim, o_proj consumes.
     # The shared perm dim is q/k/v output_features = o_proj input_features.
+    # Supports fused q_proj (e.g. Qwen3.5: q + gate fused, output = 2*hidden)
+    # and GQA (k/v smaller dims than q).
     for block, names in by_attn_block.items():
-        qkv = [n for n in names if n.endswith(("q_proj", "k_proj", "v_proj"))]
+        q = [n for n in names if n.endswith("q_proj")]
+        k = [n for n in names if n.endswith("k_proj")]
+        v = [n for n in names if n.endswith("v_proj")]
         o = [n for n in names if n.endswith("o_proj")]
-        if qkv and o:
-            # Use the first q/k/v as the (W_A, W_B) source for the joint perm
-            w_q = _get_module(model, qkv[0]).weight
+        if q and o:
+            w_q = _get_module(model, q[0]).weight
             w_o = _get_module(model, o[0]).weight
-            shared = w_q.shape[0]  # q's out = o's in
-            members = qkv + o
-            # permute rows of q/k/v, columns of o
-            perm_targets = [0] * len(qkv) + [1]
+            # shared dim = consumer's input dimension
+            shared = w_o.shape[1]
+
+            if w_q.shape[0] == shared:
+                # Standard or GQA: q output matches shared dim.
+                # Include k/v only if their output dim also matches
+                # (MHA). For GQA (k/v have fewer output dims), skip
+                # them — they can't be row-permuted with P of size
+                # shared_dim.
+                producers = q
+                if k and _get_module(model, k[0]).weight.shape[0] == shared:
+                    producers = producers + k
+                if v and _get_module(model, v[0]).weight.shape[0] == shared:
+                    producers = producers + v
+                perm_targets = [0] * len(producers) + [1]
+                members = producers + o
+                fisher_source = q[0]
+            elif w_q.shape[0] > shared and w_q.shape[0] % shared == 0:
+                # Fused q_proj (e.g. q + gate). Include only producers
+                # whose output dim matches shared.
+                producers = q  # q fused, use first shared dim group
+                if k and _get_module(model, k[0]).weight.shape[0] == shared:
+                    producers = producers + k
+                if v and _get_module(model, v[0]).weight.shape[0] == shared:
+                    producers = producers + v
+                perm_targets = [0] * len(producers) + [1]
+                members = producers + o
+                fisher_source = o[0]  # use consumer's output Fisher
+            else:
+                # Dims don't make sense for a chain
+                if o:
+                    # Solo o_proj
+                    chains.append(LinearChainSpec(
+                        kind="solo", members=o, perm_targets=[1],
+                        fisher_source=o[0], shared_dim_size=shared,
+                    ))
+                continue
+
             chains.append(LinearChainSpec(
                 kind="fan_out_chain",
                 members=members,
                 perm_targets=perm_targets,
-                fisher_source=qkv[0],
+                fisher_source=fisher_source,
                 shared_dim_size=shared,
             ))
         elif o:
-            # Solo o_proj (no q/k/v in this block)
+            # Solo o_proj
             w_o = _get_module(model, o[0]).weight
             chains.append(LinearChainSpec(
-                kind="solo",
-                members=o,
-                perm_targets=[1],
-                fisher_source=o[0],
-                shared_dim_size=w_o.shape[1],
+                kind="solo", members=o, perm_targets=[1],
+                fisher_source=o[0], shared_dim_size=w_o.shape[1],
+            ))
+
+    # Linear attention block (Gated DeltaNet): in_proj_qkv/z/a/b as producers,
+    # out_proj as consumer. Supports fused in_proj_qkv (q/k/v concatenated).
+    for block, names in by_linear_attn_block.items():
+        in_qkv = [n for n in names if n.endswith("in_proj_qkv")]
+        in_z = [n for n in names if n.endswith("in_proj_z")]
+        out = [n for n in names if n.endswith("out_proj")]
+        conv = [n for n in names if n.endswith("conv1d")]
+
+        if in_qkv and out:
+            w_qkv = _get_module(model, in_qkv[0]).weight
+            w_out = _get_module(model, out[0]).weight
+            shared = w_out.shape[1]  # value_dim
+            # Only include producers whose output dim is a multiple of shared
+            producers = in_qkv + in_z
+            if conv:
+                w_conv = _get_module(model, conv[0]).weight
+                # Conv1d output channels divisible by shared? Include it.
+                if w_conv.shape[0] % shared == 0:
+                    producers = producers + conv
+            perm_targets = [0] * len(producers) + [1]
+            members = producers + out
+            chains.append(LinearChainSpec(
+                kind="fan_out_chain",
+                members=members,
+                perm_targets=perm_targets,
+                fisher_source=out[0],  # use consumer's output Fisher
+                shared_dim_size=shared,
+            ))
+        elif out:
+            w_out = _get_module(model, out[0]).weight
+            chains.append(LinearChainSpec(
+                kind="solo", members=out, perm_targets=[1],
+                fisher_source=out[0], shared_dim_size=w_out.shape[1],
             ))
 
     # MLP block: gate/up fan out on output dim, down_proj consumes.
@@ -216,6 +301,25 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
     return chains
 
 
+def select_chains(
+    chains: Sequence[LinearChainSpec],
+    name_filters: Sequence[str] = (),
+    max_chains: int | None = None,
+) -> list[LinearChainSpec]:
+    """Filter and optionally limit discovered chains for smoke runs."""
+    selected = list(chains)
+    if name_filters:
+        selected = [
+            chain for chain in selected
+            if any(f in member for member in chain.members for f in name_filters)
+        ]
+    if max_chains is not None:
+        if max_chains < 1:
+            raise ValueError(f"max_chains must be >= 1, got {max_chains}")
+        selected = selected[:max_chains]
+    return selected
+
+
 def _get_module(model: nn.Module, name: str) -> nn.Module:
     mod = model
     for part in name.split("."):
@@ -231,6 +335,75 @@ def _set_module(model: nn.Module, name: str, new_mod: nn.Module) -> None:
     setattr(parent, parts[-1], new_mod)
 
 
+def _apply_perm_to_weight(
+    weight: torch.Tensor,
+    perm: torch.Tensor,
+    target: int,
+) -> torch.Tensor:
+    """Apply a permutation to a weight tensor.
+
+    For fused weights (row count is a multiple of perm length), the perm is
+    applied independently to each contiguous group of length len(perm).
+    """
+    P_np = perm.cpu().numpy()
+    P_len = len(P_np)
+
+    if target == 0:
+        # Row perm (output channels)
+        if weight.shape[0] == P_len:
+            return weight[P_np, :].clone()
+        elif weight.shape[0] > P_len and weight.shape[0] % P_len == 0:
+            # Fused weight: apply P to each group
+            n_groups = weight.shape[0] // P_len
+            groups = []
+            for g in range(n_groups):
+                wg = weight[g * P_len : (g + 1) * P_len]
+                groups.append(wg[P_np, :])
+            return torch.cat(groups, dim=0)
+        else:
+            raise ValueError(
+                f"row perm: weight dim {weight.shape[0]} not compatible "
+                f"with perm length {P_len}"
+            )
+    elif target == 1:
+        # Column perm (input channels)
+        if weight.dim() == 2:
+            if weight.shape[1] == P_len:
+                return weight[:, P_np].clone()
+            elif weight.shape[1] > P_len and weight.shape[1] % P_len == 0:
+                n_groups = weight.shape[1] // P_len
+                groups = []
+                for g in range(n_groups):
+                    wg = weight[:, g * P_len : (g + 1) * P_len]
+                    groups.append(wg[:, P_np])
+                return torch.cat(groups, dim=1)
+            else:
+                raise ValueError(
+                    f"col perm: weight dim {weight.shape[1]} not compatible "
+                    f"with perm length {P_len}"
+                )
+        elif weight.dim() == 3:
+            # Conv1d weight (out_channels, in_channels, kernel_size)
+            if weight.shape[1] == P_len:
+                return weight[:, P_np, :].clone()
+            elif weight.shape[1] > P_len and weight.shape[1] % P_len == 0:
+                n_groups = weight.shape[1] // P_len
+                groups = []
+                for g in range(n_groups):
+                    wg = weight[:, g * P_len : (g + 1) * P_len, :]
+                    groups.append(wg[:, P_np, :])
+                return torch.cat(groups, dim=1)
+            else:
+                raise ValueError(
+                    f"col perm: Conv1d weight dim {weight.shape[1]} not "
+                    f"compatible with perm length {P_len}"
+                )
+        else:
+            raise ValueError(f"unexpected weight dim {weight.dim()} for col perm")
+    else:
+        raise ValueError(f"perm_target must be 0 (rows) or 1 (cols), got {target}")
+
+
 def apply_chain(
     model: nn.Module,
     chain: LinearChainSpec,
@@ -238,18 +411,12 @@ def apply_chain(
     F: torch.Tensor,
 ) -> None:
     """Apply a found permutation to all members of a chain."""
-    P_np = perm.permutation.cpu().numpy()
     for n, target in zip(chain.members, chain.perm_targets):
-        W = _get_module(model, n).weight
-        if target == 0:
-            # Permute rows (output channels)
-            W_new = W[P_np, :].clone()
-        elif target == 1:
-            # Permute columns (input channels)
-            W_new = W[:, P_np].clone()
-        else:
-            raise ValueError(f"perm_target must be 0 (rows) or 1 (cols), got {target}")
         mod = _get_module(model, n)
+        if not hasattr(mod, "weight"):
+            continue
+        W = mod.weight
+        W_new = _apply_perm_to_weight(W, perm.permutation, target)
         mod.weight.data = W_new.to(mod.weight.data.device, mod.weight.data.dtype)
 
 
@@ -272,9 +439,14 @@ def quantize_model(
     """
     if show_progress:
         print("[1/5] Discovering linear chains...", flush=True)
-    chains = discover_chains(model, config.skip_modules)
+    discovered_chains = discover_chains(model, config.skip_modules)
+    chains = select_chains(
+        discovered_chains,
+        name_filters=config.chain_name_filters,
+        max_chains=config.max_chains,
+    )
     if show_progress:
-        print(f"      found {len(chains)} chains", flush=True)
+        print(f"      found {len(discovered_chains)} chains, selected {len(chains)}", flush=True)
 
     if show_progress:
         print("[2/5] Computing activation Fisher Information...", flush=True)
@@ -286,6 +458,7 @@ def quantize_model(
         max_length=config.max_calibration_length,
         device=device,
         show_progress=show_progress,
+        loss_mode=config.fisher_loss_mode,
     )
     if show_progress:
         print(f"      computed Fisher for {len(fisher)} layers", flush=True)
@@ -301,19 +474,28 @@ def quantize_model(
     perms: dict[str, PermutationResult] = {}
     for i, chain in enumerate(chains):
         F = fisher_norm[chain.fisher_source]
-        # Use the first producer (rows-permuted) and the consumer
-        # (cols-permuted) as the (W_A, W_B) for the joint perm. The
-        # resulting P is then applied uniformly to all members'
-        # appropriate dim.
-        W_A = _get_module(model, chain.members[0]).weight.detach().float()
-        if len(chain.members) > 1:
-            W_B = _get_module(model, chain.members[-1]).weight.detach().float()
-        else:
-            W_B = W_A.clone()
+        shared = chain.shared_dim_size
+        # Slice Fisher to shared dim if it's larger (e.g., fused output)
+        if F.shape[0] > shared:
+            F = F[:shared]
 
-        if W_A.shape[0] != W_B.shape[1]:
-            # Mismatched dims (shouldn't happen with the new chain
-            # structure, but guard). Fall back to single-W.
+        # Extract W_A from the first producer. For fused weights (e.g.,
+        # in_proj_qkv with q/k/v concatenated), take only the first
+        # shared_dim rows as the representative.
+        W_A_raw = _get_module(model, chain.members[0]).weight.detach().float()
+        if W_A_raw.shape[0] >= shared:
+            W_A = W_A_raw[:shared, :]
+        else:
+            W_A = W_A_raw
+
+        # Extract W_B from the consumer (last member). Ensure cols match.
+        if len(chain.members) > 1:
+            W_B_raw = _get_module(model, chain.members[-1]).weight.detach().float()
+            if W_B_raw.dim() == 2 and W_B_raw.shape[1] >= shared:
+                W_B = W_B_raw[:, :shared]
+            else:
+                W_B = W_B_raw
+        else:
             W_B = W_A.clone()
 
         if config.method == "composite":
@@ -345,11 +527,26 @@ def quantize_model(
     quant: dict[str, QuantizedTensor] = {}
     bit_widths: dict[str, torch.Tensor] = {}
     for chain in chains:
-        for n in chain.members:
+        chain_F = fisher_norm[chain.fisher_source]
+        shared = chain.shared_dim_size
+        if chain_F.shape[0] > shared:
+            chain_F = chain_F[:shared]
+        for n, target in zip(chain.members, chain.perm_targets):
             if n in quant:
                 continue
-            W = _get_module(model, n).weight.detach().float().cpu()
-            F = fisher_norm[n]
+            mod = _get_module(model, n)
+            if not isinstance(mod, nn.Linear):
+                continue  # Skip non-Linear (e.g. Conv1d) for quantization
+            W = mod.weight.detach().float().cpu()
+            if target == 0 and n in fisher_norm and fisher_norm[n].shape[0] == W.shape[0]:
+                F = fisher_norm[n]
+            else:
+                F = chain_F
+            if F.shape[0] != W.shape[target]:
+                raise ValueError(
+                    f"Fisher length {F.shape[0]} does not match quant dim {target} "
+                    f"size {W.shape[target]} for layer {n}"
+                )
             bits = assign_bit_widths(
                 F,
                 block_size=config.block_size,
@@ -357,7 +554,7 @@ def quantize_model(
                 int2_fraction=config.int2_fraction,
                 int1_fraction=config.int1_fraction,
             )
-            qt = quantize_blockwise(W, bits, block_size=config.block_size)
+            qt = quantize_blockwise(W, bits, block_size=config.block_size, dim=target)
             quant[n] = qt
             bit_widths[n] = bits
 

@@ -1,0 +1,27 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "benchmark_type": "full discovered-chain local perplexity",
+  "date": "2026-06-20",
+  "eval_text": "benchmarks/local_eval_full_quant_tmp.txt",
+  "max_eval_tokens": 512,
+  "notes": [
+    "Full quantization selected all 56 discovered chains and exported 140 dequantized tensors.",
+    "Default mixed INT4/INT2/INT1 full artifact produced NaN perplexity during fp16 forward; first nonfinite traced to model.layers.27.mlp.",
+    "All-INT4 full artifact produced finite logits but very poor perplexity.",
+    "Q4_K_M was evaluated with llama.cpp llama-perplexity using one 128-token chunk."
+  ],
+  "mixed_int4_int2_int1": {
+    "fp16_perplexity": 97.7639,
+    "ics_dequantized_perplexity": "NaN",
+    "q4_k_m_perplexity": 43.6351,
+    "hf_tokens": 504,
+    "q4_tokens": 128
+  },
+  "all_int4": {
+    "fp16_perplexity": 97.7639,
+    "ics_dequantized_perplexity": 23126432.3211,
+    "q4_k_m_perplexity": 43.6351,
+    "hf_tokens": 504,
+    "q4_tokens": 128
+  }
+}
