@@ -179,7 +179,11 @@ def gptq_quantize(
     zeros = torch.zeros(n_groups, dtype=torch.int32, device=device)
 
     qmax = (1 << (bits - 1)) - 1  # e.g., 7 for 4-bit signed
-    qmin = -(1 << (bits - 1))     # e.g., -8 for 4-bit signed
+    qmin = -(1 << (bits - 1)) + 1  # e.g., -7 for symmetric 4-bit (was -8, see note below)
+
+    # NOTE: original code had qmin = -(1 << (bits - 1)) = -8 with scale = absmax/qmax = absmax/7.
+    # That gave dequant range [-8/7 * absmax, absmax] — asymmetric 14% larger on negative side.
+    # Switching to qmin = -7 (symmetric) gives [-absmax, absmax], matching BF16 norm exactly.
 
     for i1 in range(0, in_features, blocksize):
         i2 = min(i1 + blocksize, in_features)
