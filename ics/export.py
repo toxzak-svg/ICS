@@ -225,13 +225,57 @@ def dequantized_state_dict(loaded: dict[str, Any]) -> dict[str, torch.Tensor]:
         if layer_name in layer_chain_perm:
             target, cperm_list = layer_chain_perm[layer_name]
             cperm = torch.tensor(cperm_list, dtype=torch.long)
+            P_len = len(cperm)
             W_unperm = torch.zeros_like(W)
             if target == 0:
-                # Row perm: W_orig[cperm] = W
-                W_unperm[cperm] = W
+                # Row perm (output channels). Mirror the fused-handling in
+                # pipeline._apply_perm_to_weight: if the weight has more
+                # rows than the perm and is an exact multiple, the forward
+                # apply split it into groups of P_len and permuted each
+                # group. We must undo it group-by-group.
+                if W.shape[0] == P_len:
+                    W_unperm[cperm] = W
+                elif W.shape[0] > P_len and W.shape[0] % P_len == 0:
+                    n_groups = W.shape[0] // P_len
+                    for g in range(n_groups):
+                        g_start = g * P_len
+                        W_unperm[g_start : g_start + P_len][cperm] = W[g_start : g_start + P_len]
+                else:
+                    raise ValueError(
+                        f"row unperm: weight shape {tuple(W.shape)} not compatible "
+                        f"with perm length {P_len}"
+                    )
             else:
-                # Col perm: W_orig[:, cperm] = W
-                W_unperm[:, cperm] = W
+                # Col perm (input channels). Same fused handling for 2-D and 3-D
+                # weights (Conv1d from linear_attn).
+                if W.dim() == 2:
+                    if W.shape[1] == P_len:
+                        W_unperm[:, cperm] = W
+                    elif W.shape[1] > P_len and W.shape[1] % P_len == 0:
+                        n_groups = W.shape[1] // P_len
+                        for g in range(n_groups):
+                            g_start = g * P_len
+                            W_unperm[:, g_start : g_start + P_len][:, cperm] = W[:, g_start : g_start + P_len]
+                    else:
+                        raise ValueError(
+                            f"col unperm: weight shape {tuple(W.shape)} not compatible "
+                            f"with perm length {P_len}"
+                        )
+                elif W.dim() == 3:
+                    if W.shape[1] == P_len:
+                        W_unperm[:, cperm, :] = W
+                    elif W.shape[1] > P_len and W.shape[1] % P_len == 0:
+                        n_groups = W.shape[1] // P_len
+                        for g in range(n_groups):
+                            g_start = g * P_len
+                            W_unperm[:, g_start : g_start + P_len, :][:, cperm, :] = W[:, g_start : g_start + P_len, :]
+                    else:
+                        raise ValueError(
+                            f"col unperm (Conv1d): weight shape {tuple(W.shape)} not compatible "
+                            f"with perm length {P_len}"
+                        )
+                else:
+                    raise ValueError(f"unexpected weight dim {W.dim()} for col unperm")
             W = W_unperm
 
         state[layer_name + ".weight"] = W
