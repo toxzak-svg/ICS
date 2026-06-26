@@ -8,6 +8,7 @@
 
 ## 2026-06-26
 
+- Corrected the public docs/page framing: the active bridge pipeline target is **Qwen3.5-2B**, not Qwen3-0.6B. The Qwen3-0.6B material remains documented only as a legacy CPU/local smoke and cheaper debug reproduction.
 - **`ics/quantize.py`**: fixed `_int4_block_quantize` to use symmetric q range [-7, 7] with scale = absmax/7 instead of asymmetric [-8, 7]. The asymmetric range produced a 14% norm excess on the negative side and caused the dequantized model to diverge catastrophically (PPL ~1M instead of expected ~80-100). Note: this fix did NOT resolve the catastrophic PPL — the per-weight INT4 noise level is correct but the model's forward pass still produces garbage. Root cause still TBD.
 - **`ics/gptq.py`**: same symmetric q range fix as `quantize.py` (qmin = -7 instead of -8).
 

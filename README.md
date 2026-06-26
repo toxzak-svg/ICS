@@ -75,12 +75,37 @@ python scripts/test_correctness.py
 python scripts/test_pipeline_smoke.py
 ```
 
-## Run Qwen3-0.6B locally
+## Run Qwen3.5-2B on Colab
 
-The local Qwen runner exercises the real Hugging Face model path without
-requiring a GPU. It defaults to one calibration sample and one selected chain
-so CPU-only machines can validate the pipeline without attempting a full-model
-quantization job.
+The active Qwen target for the bridge pipeline is **Qwen/Qwen3.5-2B**. Use the
+Colab runner for the real quantization job; it downloads the upstream model,
+runs the ICS+GPTQ path, saves the artifact, and can upload staged outputs to
+Hugging Face.
+
+```bash
+python scripts/colab_quantize_qwen35.py \
+    --model Qwen/Qwen3.5-2B \
+    --output ./qwen3.5-2b-ics \
+    --max-calibration-samples 64 \
+    --max-calibration-length 256
+```
+
+For the managed Colab bridge workflow, use:
+
+```bash
+python colab_bridge/pipeline_qwen35.py
+```
+
+That bridge script targets `toxzak/Qwen3.5-2B-ICS-INT4` for the quantized model
+artifact and `toxzak/ics-quantization-artifacts` for snapshots, logs, and
+benchmark outputs.
+
+## Legacy Qwen3-0.6B local smoke
+
+The 0.6B runner is a CPU-friendly smoke/debug path only. It exercises the real
+Hugging Face model path without requiring a GPU and defaults to one calibration
+sample and one selected chain so CPU-only machines can validate mechanics
+without attempting a full-model quantization job.
 
 First make sure the tokenizer files are cached with the model snapshot:
 
@@ -127,7 +152,9 @@ debugging, but use the real tokenizer for any meaningful calibration run.
 | `ics/pipeline.py` | chain discovery, joint perm search, application, quant orchestration |
 | `ics/export.py` | safetensors save/load with perm metadata |
 | `scripts/colab_quantize_ics.py` | end-to-end CLI: load → fisher → perm → quant → save |
-| `scripts/run_qwen3_06b_pipeline.py` | CPU-friendly Qwen3-0.6B smoke runner with offline/cache support |
+| `scripts/colab_quantize_qwen35.py` | Qwen3.5-2B Colab quantization entrypoint |
+| `colab_bridge/pipeline_qwen35.py` | Qwen3.5-2B bridge orchestration with staged HF upload and PPL eval |
+| `scripts/run_qwen3_06b_pipeline.py` | legacy CPU-friendly Qwen3-0.6B smoke runner with offline/cache support |
 | `scripts/test_correctness.py` | 10 unit tests on synthetic data, including chain identity at FP32 noise |
 | `scripts/test_pipeline_smoke.py` | end-to-end pipeline on a 64-dim fake transformer plus Fisher regressions |
 | `scripts/test_gqa.py` | Qwen-style grouped-query attention chain discovery and apply smoke tests |
@@ -182,7 +209,7 @@ python scripts/benchmark_perplexity.py \
     --output-json perplexity_results_qwen3_06b.json
 ```
 
-Current tiny smoke result is recorded in
+Current Qwen3-0.6B tiny smoke result is recorded in
 `benchmarks/qwen3_06b_perplexity_smoke.json`:
 
 | model | perplexity | tokens | note |
@@ -191,10 +218,11 @@ Current tiny smoke result is recorded in
 | ics_dequantized | 4702612.5630 | 49 | one-chain smoke artifact; not full-model ICS |
 | q4_k_m | 216.8099 | 16 | llama.cpp Q4_K_M GGUF |
 
-These are not reportable WikiText-2 numbers. They use the built-in tiny eval
-text so the harness can complete on CPU. For meaningful reporting, pass a fixed
-dataset text file with `--eval-text-file`, raise `--max-eval-tokens`, and run a
-full-model ICS artifact instead of the one-chain smoke artifact.
+These are not Qwen3.5-2B report numbers and not reportable WikiText-2 numbers.
+They use the built-in tiny eval text so the harness can complete on CPU. For
+meaningful reporting, pass a fixed dataset text file with `--eval-text-file`,
+raise `--max-eval-tokens`, and run the full Qwen3.5-2B ICS artifact instead of
+the one-chain 0.6B smoke artifact.
 
 ## Caveats / honest gaps
 

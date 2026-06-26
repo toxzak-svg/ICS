@@ -4,9 +4,13 @@ Survey of every weight-quant method currently implemented in `projects/ICS/` and
 
 ## TL;DR
 
+Target correction: the active ICS bridge target is **Qwen3.5-2B**. Qwen3-0.6B
+results in this document are legacy smoke/debug evidence and cheaper
+reproductions of the export/load failure, not the current model target.
+
 You have two fundamentally different systems:
 
-1. **ICS** — *offline topological sort + variable-bit block quantization*. Permutes weights at compile time so all sensitive channels land in dense INT4 blocks, then dumps to a clean contiguous int8 stream. Designed for **NPU / mobile deployment** where the runtime kernel is dumb and memory layout matters. Currently *broken on Qwen3-0.6B end-to-end PPL* (the dequantization is emitting ~5 orders of magnitude worse than fp16 — see §6).
+1. **ICS** — *offline topological sort + variable-bit block quantization*. Permutes weights at compile time so all sensitive channels land in dense INT4 blocks, then dumps to a clean contiguous int8 stream. Designed for **NPU / mobile deployment** where the runtime kernel is dumb and memory layout matters. The active bridge target is **Qwen3.5-2B**; the checked-in Qwen3-0.6B PPL is legacy debug evidence showing the same export/load failure mode at smaller scale.
 
 2. **FABQ-RC** — *runtime adaptive mixed-precision quantization with custom CUDA kernels*. Each row gets assigned int4 or binary at quantization time, dequantized on the fly inside a fused GEMM kernel. Designed for **GPU inference** where you want compression but don't want a custom NPU target. Working at ~1.4 bpw (lite) and ~3 bpw (unified vp/ebq) with measured throughput.
 
@@ -240,7 +244,14 @@ The validation report flags this as **CPU dequantized** (not native CUDA kernel)
 
 ## Observed metrics from your benchmark JSONs
 
-### Qwen3-0.6B end-to-end perplexity (the broken one)
+### Qwen3.5-2B / Qwen3-0.6B ICS perplexity status
+
+The active ICS target is `Qwen/Qwen3.5-2B` via `colab_bridge/pipeline_qwen35.py`.
+The existing HF artifact `toxzak/Qwen3.5-2B-ICS-INT4` was measured as broken:
+BF16 PPL 30.8 vs ICS-dequant PPL 1,170,034, with logit max_diff 28.75.
+
+The smaller Qwen3-0.6B debug run shows the same class of failure in a cheaper
+local artifact.
 
 `ICS/perplexity_results_qwen3_06b_full_int4.json` (504 tokens, block_size=64):
 
@@ -303,7 +314,9 @@ The ics_dequantized PPL being ~5 orders of magnitude worse than fp16 is not a qu
 
 In rough priority order, based on what's broken or missing:
 
-1. **Fix the ICS end-to-end PPL.** The 23M perplexity is a bug, not a quantization ceiling. Until that's under ~150 on Qwen3-0.6B, the ICS writeup can't be defended. Start by dequantizing one chain member and comparing to the pre-perm weight bit-exact.
+0. **Fix the ICS end-to-end PPL on Qwen3.5-2B.** The 1,170,034 PPL artifact is a bug, not a quantization ceiling. The 0.6B run is only a cheaper reproduction. Start by dequantizing one Qwen3.5-2B chain member and comparing to the pre-perm weight bit-exact.
+
+1. **Use the Qwen3-0.6B result only as a cheaper reproduction.** The 23M perplexity is a bug, not a quantization ceiling, but the defensible target for this bridge is Qwen3.5-2B.
 
 2. **Wire the spectral permutation into the pipeline.** It's the best of the three (OR-semantics, no alpha/beta knobs) and your code has it but I don't see a switch flag. One line in `pipeline.py` plus a config flag.
 

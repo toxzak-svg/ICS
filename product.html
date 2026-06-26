@@ -497,14 +497,12 @@ y = matmul(x, W_packed)      <span class="c"># one fetch, no gather</span></pre>
     <span class="k">--output</span> ./gemma-4-27b-ics \
     <span class="k">--max-calibration-samples</span> 64 \
     <span class="k">--max-calibration-length</span>  256</pre>
-<pre><span class="c"># Local CPU smoke, Qwen3-0.6B cached snapshot</span>
-python scripts/run_qwen3_06b_pipeline.py \
-    <span class="k">--local-files-only</span> \
-    <span class="k">--offline</span> \
-    <span class="k">--max-calibration-samples</span> 1 \
-    <span class="k">--max-calibration-length</span>  8 \
-    <span class="k">--max-chains</span> 1 \
-    <span class="k">--no-save</span></pre>
+<pre><span class="c"># Colab GPU target, Qwen3.5-2B</span>
+python scripts/colab_quantize_qwen35.py \
+    <span class="k">--model</span> Qwen/Qwen3.5-2B \
+    <span class="k">--output</span> ./qwen3.5-2b-ics \
+    <span class="k">--max-calibration-samples</span> 64 \
+    <span class="k">--max-calibration-length</span> 256</pre>
     </div>
     <div class="card tight">
       <h3>What lands on disk</h3>
@@ -542,8 +540,8 @@ python scripts/run_qwen3_06b_pipeline.py \
         <div class="stat-label">Pipeline + Fisher smoke tests</div>
       </div>
       <div class="stat">
-        <div class="stat-num">1/2</div>
-        <div class="stat-label">Qwen3-0.6B smoke chain quantized</div>
+        <div class="stat-num">2B</div>
+        <div class="stat-label">Qwen3.5-2B bridge target</div>
       </div>
     </div>
 
@@ -553,16 +551,16 @@ python scripts/run_qwen3_06b_pipeline.py \
       <div class="bench"><span class="bench-label">MLP fan-out + down</span><div class="bench-track"><div class="bench-fill" style="width:7%"></div></div><span class="bench-val">7.6&times;10<sup>&minus;6</sup></span></div>
       <div class="bench"><span class="bench-label">attention fan-out + o</span><div class="bench-track"><div class="bench-fill" style="width:1%"></div></div><span class="bench-val">1.4&times;10<sup>&minus;6</sup></span></div>
       <div class="bench"><span class="bench-label">full transformer block</span><div class="bench-track"><div class="bench-fill" style="width:0.4%"></div></div><span class="bench-val">3.7&times;10<sup>&minus;9</sup></span></div>
-      <div class="bench"><span class="bench-label">Qwen3-0.6B local smoke</span><div class="bench-track"><div class="bench-fill" style="width:12%"></div></div><span class="bench-val">1 perm / 2 layers</span></div>
+      <div class="bench"><span class="bench-label">Qwen3.5-2B bridge artifact</span><div class="bench-track"><div class="bench-fill" style="width:12%"></div></div><span class="bench-val">ICS+GPTQ INT4</span></div>
       <div class="bench"><span class="bench-label">fp16 PPL smoke</span><div class="bench-track"><div class="bench-fill" style="width:22%"></div></div><span class="bench-val">92.9362</span></div>
       <div class="bench"><span class="bench-label">Q4_K_M PPL smoke</span><div class="bench-track"><div class="bench-fill" style="width:48%"></div></div><span class="bench-val">216.8099</span></div>
     </div>
-    <p class="sub" style="margin-top: 18px;">Perplexity harness now compares HF fp16, ICS-dequantized weights, and llama.cpp Q4_K_M. These are tiny local smoke numbers, not WikiText-2 report numbers. The one-chain ICS smoke artifact is intentionally labeled separately from full-model ICS.</p>
+    <p class="sub" style="margin-top: 18px;">Perplexity harness now compares HF fp16, ICS-dequantized weights, and llama.cpp Q4_K_M. The active bridge target is Qwen3.5-2B; older Qwen3-0.6B numbers are local smoke/debug evidence only, not the current benchmark claim.</p>
   </section>
 
   <section class="section">
     <h2><span class="num">07</span>Code structure</h2>
-    <p class="sub">A small, importable package. CLI is a thin script on top.</p>
+    <p class="sub">A small, importable package. The Qwen3.5-2B Colab runner is the current Qwen path; the 0.6B runner is retained as a legacy smoke/debug script.</p>
     <div class="file-tree">
 <span class="d">ICS/</span>
 ├── <span class="d">ics/</span>
