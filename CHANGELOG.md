@@ -1,3 +1,8 @@
+
+## 2026-06-27
+
+Daily sync.
+
 ﻿## 2026-06-25
 
 - **`ics/pipeline.py`** (+221/-X): pipeline expansion (new stages, expanded surface).
