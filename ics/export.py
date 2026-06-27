@@ -201,11 +201,23 @@ def dequantized_state_dict(loaded: dict[str, Any]) -> dict[str, torch.Tensor]:
     layer_perms = loaded.get("layer_perms", {})
     chain_members = loaded.get("chain_members", {})
 
-    # Build per-layer chain-perm lookup: layer_name -> (target, perm)
+    # Build per-layer chain-perm lookup: layer_name -> (target, perm).
+    # For GQA chains, members in gqa_sub_perm_members use the chain's
+    # gqa_sub_perm (smaller length, derived from main perm) instead of
+    # the main perm. We prefer the explicit `member_perms` mapping if
+    # present (newer artifacts); fall back to the main perm for older
+    # artifacts without GQA metadata.
     layer_chain_perm: dict[str, tuple[int, list[int]]] = {}
     for chain_key, info in chain_members.items():
-        perm_list = info["permutation"]
+        gqa_set = set(info.get("gqa_sub_perm_members", []) or [])
+        member_perms = info.get("member_perms")
         for member, target in zip(info["members"], info["targets"]):
+            if member_perms is not None and member in member_perms:
+                perm_list = member_perms[member]
+            elif member in gqa_set and info.get("gqa_sub_perm") is not None:
+                perm_list = info["gqa_sub_perm"]
+            else:
+                perm_list = info["permutation"]
             layer_chain_perm[member] = (target, perm_list)
 
     for layer_name, qt in loaded["layers"].items():

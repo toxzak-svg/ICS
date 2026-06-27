@@ -1,7 +1,11 @@
 
 ## 2026-06-27
 
-Daily sync.
+- **GQA-aware sub-perm in pipeline**: `discover_chains` now detects GQA structure (k/v with smaller output dim than q, where `shared % k_dim == 0`) and includes them in the chain with a derived sub-perm. New `_derive_gqa_sub_perm` constructs a strict permutation of length `k_dim` from the main chain perm via collision-resolved nearest-unused search. **Pre-fix code excluded k/v entirely** — root cause of catastrophic PPL (~1M). Pre-fix behavior: `softmax(q_permuted · k_original · v_original)` had mismatched layouts because q heads were reordered across KV group boundaries without reordering the KV heads themselves.
+- **`PermutationResult.gqa_sub_perm`**: new field, set by `quantize_model` after the main perm is found. Length `k_dim` for GQA chains, `None` otherwise.
+- **`ics/export.py`**: dequant reads `member_perms` map for per-member perm dispatch — GQA members get the sub-perm, all others get the main perm. Falls back gracefully for older artifacts without `member_perms` or `gqa_sub_perm_members` (uses main perm for everything, preserving pre-GQA artifact compatibility).
+- **`scripts/test_gqa.py`**: 4 tests (chain discovery with k/v, sub-perm strict-perm invariant across identity/swap/adversarial/real perms, apply_chain with sub-perm keeps forward finite + bounded, end-to-end strict perm after composite-score perm) all green. Full local suite: 24/24 tests pass.
+- **Fisher normalization follows GQA sub-perm**: for GQA members the Fisher vector is reordered by `gqa_sub` before bit-width assignment, so the bit allocation matches the permuted weight rows.
 
 ﻿## 2026-06-25
 

@@ -102,6 +102,14 @@ class LinearChainSpec:
             1 = permute columns (input dim)
         fisher_source: layer whose Fisher vector drives the sort
         shared_dim_size: length of the perm (i.e., the shared channel dim)
+        gqa_sub_perm_members: subset of `members` whose rows get a
+            GQA-derived sub-perm (smaller output dim than the main chain
+            perm). E.g. Qwen3 attention has GQA where k_proj/v_proj
+            have output_dim = shared / gqa_ratio; their rows are
+            permuted by a sub-perm derived from the main chain perm P
+            via _derive_gqa_sub_perm.
+        gqa_ratio: shared_dim_size // member_out_features for the
+            gqa_sub_perm_members. 1 = no GQA.
     """
 
     kind: str
@@ -109,6 +117,8 @@ class LinearChainSpec:
     perm_targets: list[int]
     fisher_source: str
     shared_dim_size: int = 0
+    gqa_sub_perm_members: tuple[str, ...] = ()
+    gqa_ratio: int = 1
 
 
 @dataclass
@@ -193,15 +203,31 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
 
             if w_q.shape[0] == shared:
                 # Standard or GQA: q output matches shared dim.
-                # Include k/v only if their output dim also matches
-                # (MHA). For GQA (k/v have fewer output dims), skip
-                # them — they can't be row-permuted with P of size
-                # shared_dim.
-                producers = q
-                if k and _get_module(model, k[0]).weight.shape[0] == shared:
-                    producers = producers + k
+                # For GQA (k/v have fewer output dims but the ratio
+                # divides shared), include k/v with a GQA sub-perm so
+                # their rows are reordered consistently with q/o.
+                # For MHA where k/v shape[0] == shared, include them
+                # directly (no sub-perm needed).
+                gqa_sub_perm_members: tuple[str, ...] = ()
+                gqa_ratio = 1
+                w_k_dim = _get_module(model, k[0]).weight.shape[0] if k else 0
+                w_v_dim = _get_module(model, v[0]).weight.shape[0] if v else 0
+                if k and w_k_dim == shared:
+                    producers = q + k
+                elif k and shared % w_k_dim == 0:
+                    producers = q + k
+                    gqa_sub_perm_members = (k[0],)
+                    gqa_ratio = shared // w_k_dim
+                else:
+                    producers = q
                 if v and _get_module(model, v[0]).weight.shape[0] == shared:
                     producers = producers + v
+                elif v and shared % _get_module(model, v[0]).weight.shape[0] == 0:
+                    producers = producers + v
+                    gqa_sub_perm_members = gqa_sub_perm_members + (v[0],)
+                    # If k wasn't GQA but v is, set ratio from v
+                    if gqa_ratio == 1:
+                        gqa_ratio = shared // _get_module(model, v[0]).weight.shape[0]
                 perm_targets = [0] * len(producers) + [1]
                 members = producers + o
                 fisher_source = q[0]
@@ -232,6 +258,8 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
                 perm_targets=perm_targets,
                 fisher_source=fisher_source,
                 shared_dim_size=shared,
+                gqa_sub_perm_members=gqa_sub_perm_members,
+                gqa_ratio=gqa_ratio,
             ))
         elif o:
             # Solo o_proj
@@ -339,6 +367,91 @@ def _set_module(model: nn.Module, name: str, new_mod: nn.Module) -> None:
     for part in parts[:-1]:
         parent = getattr(parent, part)
     setattr(parent, parts[-1], new_mod)
+
+
+def _derive_gqa_sub_perm(P: torch.Tensor, k_dim: int, gqa_ratio: int) -> torch.Tensor:
+    """Derive a strict permutation of length `k_dim` for K/V from a Q perm of length `shared`.
+
+    For GQA attention, k_proj/v_proj have out_features = shared / gqa_ratio.
+    Their rows must be reordered consistently with the Q-perm so the GQA
+    broadcast (k head d -> Q heads [d*gqa_ratio, (d+1)*gqa_ratio)) stays
+    aligned with the permuted Q layout.
+
+    Construction:
+      1. Initial pass: ``initial[d] = P[d * gqa_ratio] // gqa_ratio`` —
+         the OLD KV head that corresponds to the NEW Q head at position
+         ``d * gqa_ratio``. This picks one representative Q head per GQA group.
+      2. Collision resolution: if two NEW positions map to the same OLD KV
+         head (which can happen when the chain perm P isn't GQA-respecting),
+         search outward from the initial value to find the nearest unused OLD
+         KV head. The result is a strict permutation of ``[0, k_dim)``.
+
+    Returns:
+        LongTensor of shape [k_dim]. ``K_sub[d] = j`` means "NEW K row d
+        was OLD K row j" — i.e. ``W_k_new[d, :] = W_k_old[K_sub[d], :]``.
+
+    Note: this is only the "row reorder" part of the GQA perm. It does NOT
+    restore bit-exact forward through attention when P is not GQA-respecting
+    (the GQA broadcast itself scrambles Q-head-to-KV-head pairing). However,
+    for ICS purposes (minimize quantization error on a permuted chain), this
+    gives K/V a layout that's "as aligned as possible" with Q's perm — much
+    better than leaving K/V untouched (the pre-fix behavior).
+    """
+    import numpy as np
+
+    P_np = P.detach().cpu().numpy().astype(np.int64, copy=False)
+    if P_np.ndim != 1:
+        raise ValueError(f"P must be 1-D, got shape {P_np.shape}")
+    if gqa_ratio < 1:
+        raise ValueError(f"gqa_ratio must be >= 1, got {gqa_ratio}")
+    if k_dim <= 0:
+        raise ValueError(f"k_dim must be > 0, got {k_dim}")
+    if P_np.shape[0] != k_dim * gqa_ratio:
+        raise ValueError(
+            f"P length {P_np.shape[0]} != k_dim * gqa_ratio = {k_dim * gqa_ratio}; "
+            "check gqa_ratio matches the model's GQA structure"
+        )
+
+    indices = np.arange(k_dim, dtype=np.int64) * gqa_ratio
+    initial = (P_np[indices] // gqa_ratio).astype(np.int64)  # [k_dim]
+
+    used = np.zeros(k_dim, dtype=bool)
+    result = np.empty(k_dim, dtype=np.int64)
+    for d in range(k_dim):
+        cand = int(initial[d])
+        # Walk outward from cand; first unused wins.
+        placed = False
+        for offset in range(k_dim):
+            for c in (cand + offset, cand - offset):
+                if 0 <= c < k_dim and not used[c]:
+                    result[d] = c
+                    used[c] = True
+                    placed = True
+                    break
+            if placed:
+                break
+        if not placed:
+            # Exhausted all positions without placing d; this is impossible
+            # if the bookkeeping is right (we always have unused positions).
+            raise RuntimeError(
+                f"GQA sub-perm construction failed at NEW position {d} "
+                f"(initial={cand}); this is an internal logic error"
+            )
+
+    return torch.from_numpy(result)
+
+
+def _invert_perm(P: torch.Tensor) -> torch.Tensor:
+    """Invert a permutation. P[i] = j means "new position i came from old position j".
+
+    Inverse Q satisfies Q[P[i]] = i, i.e. Q[j] = i where j = P[i].
+
+    Returns:
+        LongTensor Q of same length as P such that Q[P[i]] == i for all i.
+    """
+    Q = torch.empty_like(P)
+    Q[P] = torch.arange(P.shape[0], dtype=P.dtype, device=P.device)
+    return Q
 
 
 def _dequantize_bnb_inplace(model: nn.Module) -> int:
@@ -459,13 +572,32 @@ def apply_chain(
     perm: PermutationResult,
     F: torch.Tensor,
 ) -> None:
-    """Apply a found permutation to all members of a chain."""
+    """Apply a found permutation to all members of a chain.
+
+    For GQA chains (chain.gqa_sub_perm_members is non-empty), the named
+    members' rows are permuted by ``perm.gqa_sub_perm`` (a length-``k_dim``
+    sub-perm derived from the main chain perm via _derive_gqa_sub_perm).
+    All other members use the main chain perm as before.
+    """
+    main_perm = perm.permutation
+    gqa_sub = getattr(perm, "gqa_sub_perm", None)
+    gqa_set = set(chain.gqa_sub_perm_members)
+
     for n, target in zip(chain.members, chain.perm_targets):
         mod = _get_module(model, n)
         if not hasattr(mod, "weight"):
             continue
         W = mod.weight
-        W_new = _apply_perm_to_weight(W, perm.permutation, target)
+        if n in gqa_set:
+            if gqa_sub is None:
+                raise ValueError(
+                    f"chain member {n} is in gqa_sub_perm_members but "
+                    f"perm.gqa_sub_perm is None; the pipeline must populate it"
+                )
+            # Sub-perm is a row perm of length k_dim (GQA's smaller out_features).
+            W_new = _apply_perm_to_weight(W, gqa_sub, target=0)
+        else:
+            W_new = _apply_perm_to_weight(W, main_perm, target)
         mod.weight.data = W_new.to(mod.weight.data.device, mod.weight.data.dtype)
 
 
@@ -586,10 +718,37 @@ def quantize_model(
 
         key = "/".join(chain.members)
         perms[key] = perm
+
+        # GQA sub-perm: for chains whose members include a GQA k/v
+        # (output dim < shared), derive a strict sub-perm from the main
+        # perm P so k/v's rows are reordered consistently with q/o.
+        gqa_sub_perm = None
+        gqa_member_perms: dict[str, list[int]] = {}
+        if chain.gqa_sub_perm_members and chain.gqa_ratio > 1:
+            # k_dim = shared // gqa_ratio (all GQA members share this dim)
+            k_dim = chain.shared_dim_size // chain.gqa_ratio
+            gqa_sub_perm = _derive_gqa_sub_perm(
+                perm.permutation, k_dim=k_dim, gqa_ratio=chain.gqa_ratio,
+            )
+            perm.gqa_sub_perm = gqa_sub_perm
+            # Per-member perm for export metadata: GQA members use the
+            # sub-perm; others use the main perm. The export layer
+            # reads this to inverse-perm during dequant.
+            main_perm_list = perm.permutation.cpu().tolist()
+            for member, target in zip(chain.members, chain.perm_targets):
+                if member in chain.gqa_sub_perm_members:
+                    gqa_member_perms[member] = gqa_sub_perm.cpu().tolist()
+                else:
+                    gqa_member_perms[member] = main_perm_list
+
         chain_members[key] = {
             "members": list(chain.members),
             "targets": list(chain.perm_targets),
             "permutation": perm.permutation.cpu().tolist(),
+            "gqa_sub_perm": gqa_sub_perm.cpu().tolist() if gqa_sub_perm is not None else None,
+            "gqa_sub_perm_members": list(chain.gqa_sub_perm_members),
+            "gqa_ratio": chain.gqa_ratio,
+            "member_perms": gqa_member_perms,
         }
         if show_progress and (i + 1) % 4 == 0:
             print(f"      {i + 1}/{len(chains)} chains sorted", flush=True)
@@ -692,6 +851,9 @@ def quantize_model(
             shared = chain.shared_dim_size
             if chain_F.shape[0] > shared:
                 chain_F = chain_F[:shared]
+            gqa_set = set(chain.gqa_sub_perm_members)
+            # Cache the GQA sub-perm (already computed in the perms loop above).
+            gqa_sub = perms["/".join(chain.members)].gqa_sub_perm
             for n, target in zip(chain.members, chain.perm_targets):
                 if n in quant:
                     continue
@@ -701,6 +863,13 @@ def quantize_model(
                 W = mod.weight.detach().float().cpu()
                 if target == 0 and n in fisher_norm and fisher_norm[n].shape[0] == W.shape[0]:
                     F = fisher_norm[n]
+                    # For GQA sub-perm members: the weight rows have been
+                    # permuted by gqa_sub, so the Fisher needs to follow
+                    # the same perm. NEW row d = OLD row gqa_sub[d]; the
+                    # Fisher at NEW row d should be the Fisher at OLD row
+                    # gqa_sub[d]. Reorder before bit-width assignment.
+                    if n in gqa_set and gqa_sub is not None and F.shape[0] == gqa_sub.shape[0]:
+                        F = F[gqa_sub]
                 else:
                     F = chain_F
                 if F.shape[0] != W.shape[target]:

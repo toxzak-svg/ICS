@@ -41,11 +41,17 @@ class PermutationResult:
             original layer should go to position i in the new layer".
         score: the joint cost under the chosen objective.
         method: "composite" or "sinkhorn_hungarian".
+        gqa_sub_perm: optional LongTensor of shape [k_dim] for GQA
+            chains, where k_dim = N / gqa_ratio. ``gqa_sub_perm[d] = j``
+            means "NEW K/V row d came from OLD K/V row j". Set by the
+            pipeline (ics.pipeline.quantize_model) after the main perm
+            is found, via _derive_gqa_sub_perm. None for non-GQA chains.
     """
 
     permutation: torch.Tensor
     score: float
     method: str
+    gqa_sub_perm: torch.Tensor | None = None
 
 
 def find_permutation_spectral(
