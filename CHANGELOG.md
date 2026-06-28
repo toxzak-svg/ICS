@@ -1,4 +1,9 @@
 
+## 2026-06-28
+
+Daily sync.
+
+
 ## 2026-06-27
 
 - **GQA-aware sub-perm in pipeline**: `discover_chains` now detects GQA structure (k/v with smaller output dim than q, where `shared % k_dim == 0`) and includes them in the chain with a derived sub-perm. New `_derive_gqa_sub_perm` constructs a strict permutation of length `k_dim` from the main chain perm via collision-resolved nearest-unused search. **Pre-fix code excluded k/v entirely** — root cause of catastrophic PPL (~1M). Pre-fix behavior: `softmax(q_permuted · k_original · v_original)` had mismatched layouts because q heads were reordered across KV group boundaries without reordering the KV heads themselves.
