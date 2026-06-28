@@ -261,8 +261,10 @@ def main():
 
     # 6. Dequantize back into the model for PPL
     log("STEP 6: dequantize artifact back into model for PPL eval")
-    from ics.export import dequantized_state_dict
-    sd = dequantized_state_dict(result)
+    from ics.export import load_ics_model, dequantized_state_dict
+    loaded_artifact = load_ics_model(art)
+    sd = dequantized_state_dict(loaded_artifact)
+    del loaded_artifact
     # Map names back from the export's safe names to the HF names
     name_map = {}
     for k in sd.keys():
