@@ -200,6 +200,8 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
             w_o = _get_module(model, o[0]).weight
             # shared dim = consumer's input dimension
             shared = w_o.shape[1]
+            gqa_sub_perm_members: tuple[str, ...] = ()
+            gqa_ratio = 1
 
             if w_q.shape[0] == shared:
                 # Standard or GQA: q output matches shared dim.
@@ -208,8 +210,6 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
                 # their rows are reordered consistently with q/o.
                 # For MHA where k/v shape[0] == shared, include them
                 # directly (no sub-perm needed).
-                gqa_sub_perm_members: tuple[str, ...] = ()
-                gqa_ratio = 1
                 w_k_dim = _get_module(model, k[0]).weight.shape[0] if k else 0
                 w_v_dim = _get_module(model, v[0]).weight.shape[0] if v else 0
                 if k and w_k_dim == shared:
