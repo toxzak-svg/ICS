@@ -32,7 +32,7 @@ load model (4-bit NF4)  →  compute activation-Fisher  →  find joint permutat
 1. **Load** the model in 4-bit (`BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")`) so a 27B model fits in 15GB T4 VRAM.
 2. **Fisher**: forward + backward on 64-256 short calibration strings. Captures $(\partial L / \partial a_i)^2$ per output channel of every `nn.Linear`.
 3. **Permutation**: for each chain (attention block: q/k/v/o; MLP block: gate/up/down), find a single permutation that minimizes the joint quantization cost. Block-aware rebalance keeps high-Fisher channels out of block-edge padding.
-4. **Apply**: bake the perm into the weights. For an MLP: `gate[rows]=P, up[rows]=P, down[cols]=P`. Element-wise SiLU and product commute with the perm. For attention: `q[rows]=k[rows]=v[rows]=o[cols]=P`. Softmax commutes because it's row-equivariant under a uniform row perm.
+4. **Apply**: bake the perm into the weights. For an MLP: `gate[rows]=P, up[rows]=P, down[cols]=P`. Element-wise SiLU and product commute with the perm. For non-GQA attention: `q[rows]=k[rows]=v[rows]=o[cols]=P`. GQA attention is skipped until the permutation is constrained to preserve Q/KV head groups.
 5. **Quantize**: assign INT4 / INT2 / INT1 per block based on the block's total Fisher score.
 6. **Save**: safetensors directory with `model.safetensors` (packed int8), `scales.safetensors`, `zeros.safetensors`, `bits.safetensors`, and `ics_meta.json` for reconstruction.
 
@@ -227,7 +227,7 @@ the one-chain 0.6B smoke artifact.
 ## Caveats / honest gaps
 
 - **Activation-Fisher requires gradients.** 4-bit-loaded models need BitsAndBytes ≥ 0.43 and `model.enable_input_require_grads()`.
-- **Qwen GQA is not perfectly invariant.** Qwen3-0.6B uses grouped-query attention. The smoke path safely handles the dimensions by selecting compatible producers, but GQA head grouping means attention permutations are not the same exact-invariance story as full MHA.
+- **Qwen GQA attention is skipped.** Grouped-query attention is not invariant under arbitrary channel permutations because Q heads and repeated KV heads have fixed grouping. The current chain discovery keeps MLP chains for Qwen-style models and skips GQA attention until a head-group-preserving permutation is implemented.
 - **CPU Qwen smoke is intentionally bounded.** The local runner defaults to one chain and a low-memory Fisher objective. Full-model calibration should run on a GPU with a real calibration set.
 - **27B on T4 is tight.** If you OOM during Fisher backward, drop `--max-calibration-length` from 256 to 128 first.
 - **One-shot calibration.** The Fisher is computed once on a small text mix. For domain-specific deployments, swap `DEFAULT_CALIBRATION` in `scripts/colab_quantize_ics.py` for in-domain text.

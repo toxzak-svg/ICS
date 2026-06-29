@@ -200,6 +200,16 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
             w_o = _get_module(model, o[0]).weight
             # shared dim = consumer's input dimension
             shared = w_o.shape[1]
+            kv_dims = [
+                _get_module(model, member).weight.shape[0]
+                for member in (k[:1] + v[:1])
+            ]
+            has_gqa = any(dim < shared and shared % dim == 0 for dim in kv_dims)
+            if has_gqa:
+                # Arbitrary channel permutations are not exact through GQA's
+                # fixed head grouping. Skip attention until the perm is
+                # constrained to preserve Q/KV head groups.
+                continue
             gqa_sub_perm_members: tuple[str, ...] = ()
             gqa_ratio = 1
 

@@ -314,7 +314,7 @@ The ics_dequantized PPL being ~5 orders of magnitude worse than fp16 is not a qu
 
 In rough priority order, based on what's broken or missing:
 
-0. **Fix the ICS end-to-end PPL on Qwen3.5-2B.** The 1,170,034 PPL artifact is a bug, not a quantization ceiling. The 0.6B run is only a cheaper reproduction. Start by dequantizing one Qwen3.5-2B chain member and comparing to the pre-perm weight bit-exact.
+0. **Fix the ICS end-to-end PPL on Qwen3.5-2B.** The 1,170,034 PPL artifact is a bug, not a quantization ceiling. The 0.6B run is only a cheaper reproduction. Current chain discovery skips GQA attention because arbitrary channel permutations do not preserve fixed Q/KV head groups; rerun the Qwen3.5-2B bridge with MLP-only ICS chains, then dequantize one remaining chain member and compare to the pre-perm weight if PPL is still broken.
 
 1. **Use the Qwen3-0.6B result only as a cheaper reproduction.** The 23M perplexity is a bug, not a quantization ceiling, but the defensible target for this bridge is Qwen3.5-2B.
 
