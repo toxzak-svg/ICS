@@ -57,7 +57,14 @@ class QuantizedTensor:
 
 
 def _int4_block_quantize(block: torch.Tensor) -> tuple[torch.Tensor, float, int]:
-    """Symmetric INT4 quantization of a 1-D block."""
+    """Symmetric INT4 quantization of a 1-D block.
+
+    Uses q in [-7, 7] (15 levels) with scale = absmax/7, giving a
+    symmetric dequant range of [-absmax, absmax]. The original code
+    used q in [-8, 7] with scale = absmax/7, which produced a 14% norm
+    excess on the negative side and caused the dequantized model to
+    diverge catastrophically from BF16.
+    """
     if block.numel() == 0:
         return torch.zeros(0, dtype=torch.int8), 1.0, 0
     absmax = block.abs().amax()
@@ -65,7 +72,7 @@ def _int4_block_quantize(block: torch.Tensor) -> tuple[torch.Tensor, float, int]
         # All-zero block: encode as zero with scale=1, zero=0
         return torch.zeros_like(block, dtype=torch.int8), 1.0, 0
     scale = absmax / 7.0
-    q = torch.clamp(torch.round(block / scale), -8, 7).to(torch.int8)
+    q = torch.clamp(torch.round(block / scale), -7, 7).to(torch.int8)
     return q, float(scale.item()), 0
 
 

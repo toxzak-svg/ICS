@@ -1,7 +1,15 @@
 __pycache__/
 *.py[cod]
+.env
+.env.local
 qwen3-0.6b-ics-smoke/
 qwen3-0.6b-ics-bench/
 qwen3-0.6b-ics-full/
 qwen3-0.6b-ics-full-int4/
 perplexity_results*.json
+.qwen*.upload_marker.json
+.qwen*.upload.log
+.qwen*.upload.py
+colab_bridge/_*.py
+colab_bridge/_*.log
+colab_bridge/__pycache__/

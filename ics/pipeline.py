@@ -57,6 +57,10 @@ class ICSConfig:
     int4_fraction: float = 0.5
     int2_fraction: float = 0.4
     int1_fraction: float = 0.1
+    quant_method: str = "block"  # "block" (per-block INT) or "gptq" (Hessian-based)
+    gptq_group_size: int = 128    # GPTQ: number of columns per scale group
+    gptq_percdamp: float = 0.01   # GPTQ: relative Hessian damping
+    gptq_blocksize: int = 128     # GPTQ: process this many columns at a time
     alpha: float = 1.0
     beta: float = 1.0
     method: str = "composite"
@@ -98,6 +102,14 @@ class LinearChainSpec:
             1 = permute columns (input dim)
         fisher_source: layer whose Fisher vector drives the sort
         shared_dim_size: length of the perm (i.e., the shared channel dim)
+        gqa_sub_perm_members: subset of `members` whose rows get a
+            GQA-derived sub-perm (smaller output dim than the main chain
+            perm). E.g. Qwen3 attention has GQA where k_proj/v_proj
+            have output_dim = shared / gqa_ratio; their rows are
+            permuted by a sub-perm derived from the main chain perm P
+            via _derive_gqa_sub_perm.
+        gqa_ratio: shared_dim_size // member_out_features for the
+            gqa_sub_perm_members. 1 = no GQA.
     """
 
     kind: str
@@ -105,6 +117,8 @@ class LinearChainSpec:
     perm_targets: list[int]
     fisher_source: str
     shared_dim_size: int = 0
+    gqa_sub_perm_members: tuple[str, ...] = ()
+    gqa_ratio: int = 1
 
 
 @dataclass
@@ -124,6 +138,8 @@ class ICSResult:
     bit_widths: dict[str, torch.Tensor]
     fisher: dict[str, FisherStats]
     config: ICSConfig
+    layer_perms: dict[str, torch.Tensor] = field(default_factory=dict)  # GPTQ column perms
+    chain_members: dict[str, dict] = field(default_factory=dict)  # chain -> {members, targets, permutation}
 
 
 def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[LinearChainSpec]:
@@ -184,18 +200,34 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
             w_o = _get_module(model, o[0]).weight
             # shared dim = consumer's input dimension
             shared = w_o.shape[1]
+            gqa_sub_perm_members: tuple[str, ...] = ()
+            gqa_ratio = 1
 
             if w_q.shape[0] == shared:
                 # Standard or GQA: q output matches shared dim.
-                # Include k/v only if their output dim also matches
-                # (MHA). For GQA (k/v have fewer output dims), skip
-                # them — they can't be row-permuted with P of size
-                # shared_dim.
-                producers = q
-                if k and _get_module(model, k[0]).weight.shape[0] == shared:
-                    producers = producers + k
+                # For GQA (k/v have fewer output dims but the ratio
+                # divides shared), include k/v with a GQA sub-perm so
+                # their rows are reordered consistently with q/o.
+                # For MHA where k/v shape[0] == shared, include them
+                # directly (no sub-perm needed).
+                w_k_dim = _get_module(model, k[0]).weight.shape[0] if k else 0
+                w_v_dim = _get_module(model, v[0]).weight.shape[0] if v else 0
+                if k and w_k_dim == shared:
+                    producers = q + k
+                elif k and shared % w_k_dim == 0:
+                    producers = q + k
+                    gqa_sub_perm_members = (k[0],)
+                    gqa_ratio = shared // w_k_dim
+                else:
+                    producers = q
                 if v and _get_module(model, v[0]).weight.shape[0] == shared:
                     producers = producers + v
+                elif v and shared % _get_module(model, v[0]).weight.shape[0] == 0:
+                    producers = producers + v
+                    gqa_sub_perm_members = gqa_sub_perm_members + (v[0],)
+                    # If k wasn't GQA but v is, set ratio from v
+                    if gqa_ratio == 1:
+                        gqa_ratio = shared // _get_module(model, v[0]).weight.shape[0]
                 perm_targets = [0] * len(producers) + [1]
                 members = producers + o
                 fisher_source = q[0]
@@ -226,6 +258,8 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
                 perm_targets=perm_targets,
                 fisher_source=fisher_source,
                 shared_dim_size=shared,
+                gqa_sub_perm_members=gqa_sub_perm_members,
+                gqa_ratio=gqa_ratio,
             ))
         elif o:
             # Solo o_proj
@@ -335,6 +369,134 @@ def _set_module(model: nn.Module, name: str, new_mod: nn.Module) -> None:
     setattr(parent, parts[-1], new_mod)
 
 
+def _derive_gqa_sub_perm(P: torch.Tensor, k_dim: int, gqa_ratio: int) -> torch.Tensor:
+    """Derive a strict permutation of length `k_dim` for K/V from a Q perm of length `shared`.
+
+    For GQA attention, k_proj/v_proj have out_features = shared / gqa_ratio.
+    Their rows must be reordered consistently with the Q-perm so the GQA
+    broadcast (k head d -> Q heads [d*gqa_ratio, (d+1)*gqa_ratio)) stays
+    aligned with the permuted Q layout.
+
+    Construction:
+      1. Initial pass: ``initial[d] = P[d * gqa_ratio] // gqa_ratio`` —
+         the OLD KV head that corresponds to the NEW Q head at position
+         ``d * gqa_ratio``. This picks one representative Q head per GQA group.
+      2. Collision resolution: if two NEW positions map to the same OLD KV
+         head (which can happen when the chain perm P isn't GQA-respecting),
+         search outward from the initial value to find the nearest unused OLD
+         KV head. The result is a strict permutation of ``[0, k_dim)``.
+
+    Returns:
+        LongTensor of shape [k_dim]. ``K_sub[d] = j`` means "NEW K row d
+        was OLD K row j" — i.e. ``W_k_new[d, :] = W_k_old[K_sub[d], :]``.
+
+    Note: this is only the "row reorder" part of the GQA perm. It does NOT
+    restore bit-exact forward through attention when P is not GQA-respecting
+    (the GQA broadcast itself scrambles Q-head-to-KV-head pairing). However,
+    for ICS purposes (minimize quantization error on a permuted chain), this
+    gives K/V a layout that's "as aligned as possible" with Q's perm — much
+    better than leaving K/V untouched (the pre-fix behavior).
+    """
+    import numpy as np
+
+    P_np = P.detach().cpu().numpy().astype(np.int64, copy=False)
+    if P_np.ndim != 1:
+        raise ValueError(f"P must be 1-D, got shape {P_np.shape}")
+    if gqa_ratio < 1:
+        raise ValueError(f"gqa_ratio must be >= 1, got {gqa_ratio}")
+    if k_dim <= 0:
+        raise ValueError(f"k_dim must be > 0, got {k_dim}")
+    if P_np.shape[0] != k_dim * gqa_ratio:
+        raise ValueError(
+            f"P length {P_np.shape[0]} != k_dim * gqa_ratio = {k_dim * gqa_ratio}; "
+            "check gqa_ratio matches the model's GQA structure"
+        )
+
+    indices = np.arange(k_dim, dtype=np.int64) * gqa_ratio
+    initial = (P_np[indices] // gqa_ratio).astype(np.int64)  # [k_dim]
+
+    used = np.zeros(k_dim, dtype=bool)
+    result = np.empty(k_dim, dtype=np.int64)
+    for d in range(k_dim):
+        cand = int(initial[d])
+        # Walk outward from cand; first unused wins.
+        placed = False
+        for offset in range(k_dim):
+            for c in (cand + offset, cand - offset):
+                if 0 <= c < k_dim and not used[c]:
+                    result[d] = c
+                    used[c] = True
+                    placed = True
+                    break
+            if placed:
+                break
+        if not placed:
+            # Exhausted all positions without placing d; this is impossible
+            # if the bookkeeping is right (we always have unused positions).
+            raise RuntimeError(
+                f"GQA sub-perm construction failed at NEW position {d} "
+                f"(initial={cand}); this is an internal logic error"
+            )
+
+    return torch.from_numpy(result)
+
+
+def _invert_perm(P: torch.Tensor) -> torch.Tensor:
+    """Invert a permutation. P[i] = j means "new position i came from old position j".
+
+    Inverse Q satisfies Q[P[i]] = i, i.e. Q[j] = i where j = P[i].
+
+    Returns:
+        LongTensor Q of same length as P such that Q[P[i]] == i for all i.
+    """
+    Q = torch.empty_like(P)
+    Q[P] = torch.arange(P.shape[0], dtype=P.dtype, device=P.device)
+    return Q
+
+
+def _dequantize_bnb_inplace(model: nn.Module) -> int:
+    """Replace bnb Linear4bit layers with regular nn.Linear holding the dequantized weight.
+
+    The pipeline's chain discovery + permutation + quantization code assumes regular
+    tensor weights with .shape = (out_features, in_features). bnb 4-bit stores weights
+    in a packed uint8 layout of shape (packed_size, 1), which breaks the shape-based
+    chain logic.
+
+    The 4-bit loading is only for Fisher-time VRAM savings (so a 27B model fits on a
+    15GB T4). Once Fisher is done, we dequantize to fp16/bf16 and proceed normally.
+    The save_ics_model output is the QUANTIZED form anyway, so the bnb wrapping
+    has no effect on disk output.
+
+    Returns the number of layers dequantized.
+    """
+    try:
+        import bitsandbytes as bnb
+    except ImportError:
+        return 0
+
+    n = 0
+    # Iterate over a snapshot so we can mutate the module tree in place.
+    for name, mod in list(model.named_modules()):
+        if not isinstance(mod, bnb.nn.Linear4bit):
+            continue
+        # Dequantize the 4-bit weight to bfloat16/float16 (matches bnb_4bit_compute_dtype).
+        W = bnb.functional.dequantize_4bit(mod.weight.data, mod.weight.quant_state)
+        # Build a regular nn.Linear with the dequantized weight on the same device.
+        new = nn.Linear(
+            in_features=mod.in_features,
+            out_features=mod.out_features,
+            bias=mod.bias is not None,
+            device=W.device,
+            dtype=W.dtype,
+        )
+        new.weight.data = W.contiguous().to(W.dtype)
+        if mod.bias is not None:
+            new.bias.data = mod.bias.data.detach().clone().to(W.dtype)
+        _set_module(model, name, new)
+        n += 1
+    return n
+
+
 def _apply_perm_to_weight(
     weight: torch.Tensor,
     perm: torch.Tensor,
@@ -410,13 +572,32 @@ def apply_chain(
     perm: PermutationResult,
     F: torch.Tensor,
 ) -> None:
-    """Apply a found permutation to all members of a chain."""
+    """Apply a found permutation to all members of a chain.
+
+    For GQA chains (chain.gqa_sub_perm_members is non-empty), the named
+    members' rows are permuted by ``perm.gqa_sub_perm`` (a length-``k_dim``
+    sub-perm derived from the main chain perm via _derive_gqa_sub_perm).
+    All other members use the main chain perm as before.
+    """
+    main_perm = perm.permutation
+    gqa_sub = getattr(perm, "gqa_sub_perm", None)
+    gqa_set = set(chain.gqa_sub_perm_members)
+
     for n, target in zip(chain.members, chain.perm_targets):
         mod = _get_module(model, n)
         if not hasattr(mod, "weight"):
             continue
         W = mod.weight
-        W_new = _apply_perm_to_weight(W, perm.permutation, target)
+        if n in gqa_set:
+            if gqa_sub is None:
+                raise ValueError(
+                    f"chain member {n} is in gqa_sub_perm_members but "
+                    f"perm.gqa_sub_perm is None; the pipeline must populate it"
+                )
+            # Sub-perm is a row perm of length k_dim (GQA's smaller out_features).
+            W_new = _apply_perm_to_weight(W, gqa_sub, target=0)
+        else:
+            W_new = _apply_perm_to_weight(W, main_perm, target)
         mod.weight.data = W_new.to(mod.weight.data.device, mod.weight.data.dtype)
 
 
@@ -463,6 +644,30 @@ def quantize_model(
     if show_progress:
         print(f"      computed Fisher for {len(fisher)} layers", flush=True)
 
+    # Dequantize bnb 4-bit weights back to regular nn.Linear so the rest of the
+    # pipeline (chain discovery, perm, quant, apply) sees a normal weight shape.
+    # Fisher is done; we no longer need the 4-bit memory savings.
+    n_dequant = _dequantize_bnb_inplace(model)
+    if show_progress and n_dequant:
+        # Find a representative dequantized dtype
+        dt = next((m.weight.dtype for m in model.modules()
+                   if isinstance(m, nn.Linear) and m.weight is not None and m.weight.dtype.is_floating_point),
+                  torch.bfloat16)
+        print(f"      dequantized {n_dequant} bnb 4-bit layers to {dt}", flush=True)
+
+    # Re-discover chains on the dequantized model so shared_dim_size reflects
+    # the real (out_features, in_features) shapes, not the bnb packed layout.
+    # The chain member names are unchanged, only the dim metadata is corrected.
+    if n_dequant:
+        chains = discover_chains(model, skip_modules=config.skip_modules)
+        chains = select_chains(
+            chains,
+            name_filters=config.chain_name_filters,
+            max_chains=config.max_chains,
+        )
+        if show_progress:
+            print(f"      re-discovered {len(chains)} chains on dequantized model", flush=True)
+
     # Convert to normalized per-channel tensors
     fisher_norm: dict[str, torch.Tensor] = {}
     for name, fs in fisher.items():
@@ -472,6 +677,7 @@ def quantize_model(
     if show_progress:
         print("[3/5] Finding permutations...", flush=True)
     perms: dict[str, PermutationResult] = {}
+    chain_members: dict[str, dict] = {}
     for i, chain in enumerate(chains):
         F = fisher_norm[chain.fisher_source]
         shared = chain.shared_dim_size
@@ -512,6 +718,38 @@ def quantize_model(
 
         key = "/".join(chain.members)
         perms[key] = perm
+
+        # GQA sub-perm: for chains whose members include a GQA k/v
+        # (output dim < shared), derive a strict sub-perm from the main
+        # perm P so k/v's rows are reordered consistently with q/o.
+        gqa_sub_perm = None
+        gqa_member_perms: dict[str, list[int]] = {}
+        if chain.gqa_sub_perm_members and chain.gqa_ratio > 1:
+            # k_dim = shared // gqa_ratio (all GQA members share this dim)
+            k_dim = chain.shared_dim_size // chain.gqa_ratio
+            gqa_sub_perm = _derive_gqa_sub_perm(
+                perm.permutation, k_dim=k_dim, gqa_ratio=chain.gqa_ratio,
+            )
+            perm.gqa_sub_perm = gqa_sub_perm
+            # Per-member perm for export metadata: GQA members use the
+            # sub-perm; others use the main perm. The export layer
+            # reads this to inverse-perm during dequant.
+            main_perm_list = perm.permutation.cpu().tolist()
+            for member, target in zip(chain.members, chain.perm_targets):
+                if member in chain.gqa_sub_perm_members:
+                    gqa_member_perms[member] = gqa_sub_perm.cpu().tolist()
+                else:
+                    gqa_member_perms[member] = main_perm_list
+
+        chain_members[key] = {
+            "members": list(chain.members),
+            "targets": list(chain.perm_targets),
+            "permutation": perm.permutation.cpu().tolist(),
+            "gqa_sub_perm": gqa_sub_perm.cpu().tolist() if gqa_sub_perm is not None else None,
+            "gqa_sub_perm_members": list(chain.gqa_sub_perm_members),
+            "gqa_ratio": chain.gqa_ratio,
+            "member_perms": gqa_member_perms,
+        }
         if show_progress and (i + 1) % 4 == 0:
             print(f"      {i + 1}/{len(chains)} chains sorted", flush=True)
 
@@ -526,37 +764,129 @@ def quantize_model(
         print("[5/5] Quantizing layers...", flush=True)
     quant: dict[str, QuantizedTensor] = {}
     bit_widths: dict[str, torch.Tensor] = {}
-    for chain in chains:
-        chain_F = fisher_norm[chain.fisher_source]
-        shared = chain.shared_dim_size
-        if chain_F.shape[0] > shared:
-            chain_F = chain_F[:shared]
-        for n, target in zip(chain.members, chain.perm_targets):
-            if n in quant:
+    layer_perms: dict[str, torch.Tensor] = {}  # GPTQ column perm per layer
+
+    if config.quant_method == "gptq":
+        # GPTQ path: compute per-layer Hessian, then quantize column-by-column.
+        from ics.gptq import compute_layer_hessian, gptq_quantize
+        from ics.quantize import QuantizedTensor
+
+        if show_progress:
+            print("      computing per-layer Hessian on calibration data...", flush=True)
+        # Build calibration batches once; reuse for Hessian.
+        calib_batches = []
+        for text in config.calibration_texts:
+            enc = tokenizer(text, return_tensors="pt", truncation=True, max_length=config.max_calibration_length)
+            if enc["input_ids"].shape[-1] < 2:
                 continue
-            mod = _get_module(model, n)
-            if not isinstance(mod, nn.Linear):
-                continue  # Skip non-Linear (e.g. Conv1d) for quantization
-            W = mod.weight.detach().float().cpu()
-            if target == 0 and n in fisher_norm and fisher_norm[n].shape[0] == W.shape[0]:
-                F = fisher_norm[n]
-            else:
-                F = chain_F
-            if F.shape[0] != W.shape[target]:
-                raise ValueError(
-                    f"Fisher length {F.shape[0]} does not match quant dim {target} "
-                    f"size {W.shape[target]} for layer {n}"
+            calib_batches.append({k: v.to(device) for k, v in enc.items()})
+        layer_hessians = compute_layer_hessian(
+            model,
+            calib_batches,
+            layer_filter=lambda n, m: any(n in c.members for c in chains),
+            device=device,
+        )
+        if show_progress:
+            print(f"      Hessians for {len(layer_hessians)} layers", flush=True)
+
+        for chain in chains:
+            for n, target in zip(chain.members, chain.perm_targets):
+                if n in quant:
+                    continue
+                mod = _get_module(model, n)
+                if not isinstance(mod, nn.Linear):
+                    continue
+                W = mod.weight.detach().float().cpu()
+                if n not in layer_hessians:
+                    continue
+                H = layer_hessians[n].to(W.device)
+                Q, scales, zeros, gptq_perm = gptq_quantize(
+                    W, H,
+                    bits=4,
+                    group_size=config.gptq_group_size,
+                    percdamp=config.gptq_percdamp,
+                    blocksize=config.gptq_blocksize,
                 )
-            bits = assign_bit_widths(
-                F,
-                block_size=config.block_size,
-                int4_fraction=config.int4_fraction,
-                int2_fraction=config.int2_fraction,
-                int1_fraction=config.int1_fraction,
-            )
-            qt = quantize_blockwise(W, bits, block_size=config.block_size, dim=target)
-            quant[n] = qt
-            bit_widths[n] = bits
+                # Q is the GPTQ-quantized weight in GPTQ's column-permuted order.
+                # scales/zeros are per-group (group_size columns share a scale).
+                # We store Q directly in the QuantizedTensor. The dequant path
+                # (dequantize_blockwise with the stored scales) reconstructs
+                # W_perm, and the saved layer_perms[gptq_perm] reverses the
+                # column permutation to recover the original W.
+                out_features, in_features = W.shape
+                n_groups = scales.shape[0]
+                bits = torch.full((n_groups,), 4, dtype=torch.int32)
+                # Arrange Q in the "block-row-major" layout that
+                # dequantize_blockwise expects: for each group of block_size
+                # cols, store all out_features rows of that col-block in
+                # row-major, then the next group. The natural Q.reshape(-1)
+                # is "all-cols-row-major" which the dequant can't read.
+                qdata_pieces = []
+                group_size = in_features // n_groups
+                for g in range(n_groups):
+                    start = g * group_size
+                    end = (g + 1) * group_size
+                    block_q = Q[:, start:end].contiguous().reshape(-1)
+                    qdata_pieces.append(block_q)
+                qdata_flat = torch.cat(qdata_pieces).cpu()
+                qt = QuantizedTensor(
+                    qdata=qdata_flat,
+                    scales=scales.cpu(),
+                    zeros=zeros.cpu(),
+                    bits=bits,
+                    block_size=config.gptq_group_size,
+                    original_shape=(out_features, in_features),
+                    quant_dim=1,  # columns
+                    method="gptq_per_group",
+                )
+                quant[n] = qt
+                bit_widths[n] = bits
+                layer_perms[n] = gptq_perm
+        if show_progress:
+            print(f"      GPTQ quantized {len(quant)} layers", flush=True)
+    else:
+        # Original per-block path.
+        for chain in chains:
+            chain_F = fisher_norm[chain.fisher_source]
+            shared = chain.shared_dim_size
+            if chain_F.shape[0] > shared:
+                chain_F = chain_F[:shared]
+            gqa_set = set(chain.gqa_sub_perm_members)
+            # Cache the GQA sub-perm (already computed in the perms loop above).
+            gqa_sub = perms["/".join(chain.members)].gqa_sub_perm
+            for n, target in zip(chain.members, chain.perm_targets):
+                if n in quant:
+                    continue
+                mod = _get_module(model, n)
+                if not isinstance(mod, nn.Linear):
+                    continue  # Skip non-Linear (e.g. Conv1d) for quantization
+                W = mod.weight.detach().float().cpu()
+                if target == 0 and n in fisher_norm and fisher_norm[n].shape[0] == W.shape[0]:
+                    F = fisher_norm[n]
+                    # For GQA sub-perm members: the weight rows have been
+                    # permuted by gqa_sub, so the Fisher needs to follow
+                    # the same perm. NEW row d = OLD row gqa_sub[d]; the
+                    # Fisher at NEW row d should be the Fisher at OLD row
+                    # gqa_sub[d]. Reorder before bit-width assignment.
+                    if n in gqa_set and gqa_sub is not None and F.shape[0] == gqa_sub.shape[0]:
+                        F = F[gqa_sub]
+                else:
+                    F = chain_F
+                if F.shape[0] != W.shape[target]:
+                    raise ValueError(
+                        f"Fisher length {F.shape[0]} does not match quant dim {target} "
+                        f"size {W.shape[target]} for layer {n}"
+                    )
+                bits = assign_bit_widths(
+                    F,
+                    block_size=config.block_size,
+                    int4_fraction=config.int4_fraction,
+                    int2_fraction=config.int2_fraction,
+                    int1_fraction=config.int1_fraction,
+                )
+                qt = quantize_blockwise(W, bits, block_size=config.block_size, dim=target)
+                quant[n] = qt
+                bit_widths[n] = bits
 
     return ICSResult(
         perms=perms,
@@ -564,4 +894,6 @@ def quantize_model(
         bit_widths=bit_widths,
         fisher=fisher,
         config=config,
+        layer_perms=layer_perms,
+        chain_members=chain_members,
     )
