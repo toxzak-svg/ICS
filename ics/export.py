@@ -71,6 +71,8 @@ def save_ics_model(
         "method": result.config.method,
         "quant_method": result.config.quant_method,
         "gptq_group_size": result.config.gptq_group_size,
+        "erc_enabled": result.config.erc_enabled,
+        "erc_max_relative_error": result.config.erc_max_relative_error,
         "layers": {},
         "permutations": {},
         "layer_perms": {},  # GPTQ column permutations per layer
@@ -88,6 +90,16 @@ def save_ics_model(
             "block_size": qt.block_size,
             "quant_dim": qt.quant_dim,
             "method": qt.method,
+            "erc_promoted": (
+                qt.erc_promoted.cpu().tolist()
+                if qt.erc_promoted is not None
+                else None
+            ),
+            "erc_error_scores": (
+                qt.erc_error_scores.cpu().tolist()
+                if qt.erc_error_scores is not None
+                else None
+            ),
         }
         if layer_name in result.layer_perms:
             meta["layer_perms"][layer_name] = result.layer_perms[layer_name].cpu().tolist()
@@ -150,6 +162,16 @@ def load_ics_model(output_dir: str | Path) -> dict[str, Any]:
             original_shape=tuple(info["original_shape"]),
             quant_dim=info.get("quant_dim", -1),
             method=info["method"],
+            erc_promoted=(
+                torch.tensor(info["erc_promoted"], dtype=torch.bool)
+                if info.get("erc_promoted") is not None
+                else None
+            ),
+            erc_error_scores=(
+                torch.tensor(info["erc_error_scores"], dtype=torch.float32)
+                if info.get("erc_error_scores") is not None
+                else None
+            ),
         )
         layers[layer_name] = qt
 

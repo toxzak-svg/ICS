@@ -51,6 +51,9 @@ class ICSConfig:
         max_calibration_length: max tokens per calibration sample.
         skip_modules: dotted-path substrings; modules matching any
             substring are skipped (e.g. "lm_head", "embed_tokens").
+        erc_enabled: when True, promote unsafe INT1/INT2 blocks to INT4
+            using Fisher-weighted reconstruction error before export.
+        erc_max_relative_error: promotion threshold for ERC scoring.
     """
 
     block_size: int = 64
@@ -79,6 +82,8 @@ class ICSConfig:
     chain_name_filters: tuple[str, ...] = ()
     max_chains: int | None = None
     fisher_loss_mode: str = "cross_entropy"
+    erc_enabled: bool = True
+    erc_max_relative_error: float = 0.25
 
 
 @dataclass
@@ -894,9 +899,18 @@ def quantize_model(
                     int2_fraction=config.int2_fraction,
                     int1_fraction=config.int1_fraction,
                 )
-                qt = quantize_blockwise(W, bits, block_size=config.block_size, dim=target)
+                qt = quantize_blockwise(
+                    W,
+                    bits,
+                    block_size=config.block_size,
+                    dim=target,
+                    erc_fisher=F if config.erc_enabled else None,
+                    erc_max_relative_error=(
+                        config.erc_max_relative_error if config.erc_enabled else None
+                    ),
+                )
                 quant[n] = qt
-                bit_widths[n] = bits
+                bit_widths[n] = qt.bits
 
     return ICSResult(
         perms=perms,

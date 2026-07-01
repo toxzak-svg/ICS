@@ -95,3 +95,6 @@ Daily sync.
 
 - Daily auto-sync: refreshed .gitignore; updated scripts/benchmark_perplexity.py; added .env.example, colab_hf_github_pipeline.ipynb, enchmarks/qwen3_06b_full_quant_ppl.json, local Qwen eval transcript, and ssh_tunnels_and_how_to_dig_them (1).ipynb.
 
+## 2026-07-01
+
+Daily sync.

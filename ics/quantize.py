@@ -54,6 +54,8 @@ class QuantizedTensor:
     original_shape: tuple
     quant_dim: int = -1
     method: str = "symmetric_per_block"
+    erc_promoted: torch.Tensor | None = None
+    erc_error_scores: torch.Tensor | None = None
 
 
 def _int4_block_quantize(block: torch.Tensor) -> tuple[torch.Tensor, float, int]:
@@ -143,11 +145,108 @@ def _dequant_int1_block(q_packed: torch.Tensor, absmax: float, n: int) -> torch.
     return (out.to(torch.float32) * 2 - 1) * absmax
 
 
+def _quantize_dequantize_1d(block: torch.Tensor, bits: int) -> torch.Tensor:
+    """Quantize and immediately dequantize a 1-D block for error scoring."""
+    if bits == 4:
+        q, scale, _ = _int4_block_quantize(block)
+        return _dequant_int4_block(q, scale)
+    if bits == 2:
+        q, scale, _ = _int2_block_quantize(block)
+        return _dequant_int2_block(q, scale, block.numel())
+    if bits == 1:
+        q, scale, _ = _int1_block_quantize(block)
+        return _dequant_int1_block(q, scale, block.numel())
+    raise ValueError(f"Unsupported bit-width {bits}; expected 1, 2, or 4")
+
+
+def balance_bit_widths_by_error(
+    W: torch.Tensor,
+    bits_per_block: torch.Tensor,
+    fisher: torch.Tensor,
+    block_size: int = 64,
+    dim: int = -1,
+    max_relative_error: float = 0.25,
+    promote_to_bits: int = 4,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Promote unsafe low-bit blocks using Fisher-weighted reconstruction error.
+
+    This is the Error-Bounded Residual Cell (ERC) guard. The existing Fisher
+    assignment proposes low-bit blocks; ERC checks each proposed INT1/INT2 block
+    before export. Blocks whose weighted reconstruction error exceeds the
+    budget are promoted to INT4. Low-Fisher tail blocks can remain compressed
+    even when their unweighted relative error is large.
+
+    Returns:
+        adjusted bit-widths, boolean promotion mask, per-block error scores.
+    """
+    if promote_to_bits != 4:
+        raise ValueError("ERC currently supports promotion to INT4 only")
+    if max_relative_error < 0:
+        raise ValueError("max_relative_error must be non-negative")
+
+    W = W.detach().to(torch.float32).cpu()
+    if dim < 0:
+        dim = W.ndim + dim
+    if not (0 <= dim < W.ndim):
+        raise ValueError(f"dim {dim} out of range for tensor of ndim {W.ndim}")
+
+    target_size = W.shape[dim]
+    n_blocks = (target_size + block_size - 1) // block_size
+    bits = bits_per_block.detach().to(torch.int32).cpu().clone()
+    if bits.shape[0] != n_blocks:
+        raise ValueError(
+            f"bits_per_block length {bits.shape[0]} != n_blocks {n_blocks} "
+            f"(target dim size {target_size}, block_size {block_size})"
+        )
+
+    F = fisher.detach().to(torch.float32).cpu()
+    if F.shape[0] != target_size:
+        raise ValueError(f"fisher length {F.shape[0]} != target dim size {target_size}")
+    F = torch.clamp(F, min=0)
+    f_max = F.max()
+    if f_max > 0:
+        F = F / f_max
+    else:
+        F = torch.ones_like(F)
+
+    if dim != W.ndim - 1:
+        W = W.transpose(dim, -1).contiguous()
+    W_flat = W.reshape(-1, W.shape[-1]).contiguous()
+
+    promoted = torch.zeros(n_blocks, dtype=torch.bool)
+    scores = torch.zeros(n_blocks, dtype=torch.float32)
+
+    for b in range(n_blocks):
+        bw = int(bits[b].item())
+        if bw >= promote_to_bits:
+            continue
+
+        start = b * block_size
+        end = min(start + block_size, target_size)
+        block_2d = W_flat[:, start:end].contiguous()
+        block = block_2d.view(-1)
+        dq = _quantize_dequantize_1d(block, bw).view_as(block_2d)
+
+        err = (block_2d - dq).pow(2).mean(dim=0)
+        energy = block_2d.pow(2).mean(dim=0).sum()
+        weighted_err = (err * F[start:end]).sum()
+        score = weighted_err / (energy + 1e-12)
+        scores[b] = score
+
+        if float(score.item()) > max_relative_error:
+            bits[b] = promote_to_bits
+            promoted[b] = True
+
+    return bits, promoted, scores
+
+
 def quantize_blockwise(
     W: torch.Tensor,
     bits_per_block: torch.Tensor,
     block_size: int = 64,
     dim: int = -1,
+    erc_fisher: torch.Tensor | None = None,
+    erc_max_relative_error: float | None = None,
 ) -> QuantizedTensor:
     """Quantize a tensor with per-block bit-widths along a chosen dim.
 
@@ -178,6 +277,18 @@ def quantize_blockwise(
         raise ValueError(
             f"bits_per_block length {bits_per_block.shape[0]} != n_blocks {n_blocks} "
             f"(target dim size {target_size}, block_size {block_size})"
+        )
+
+    erc_promoted = None
+    erc_error_scores = None
+    if erc_fisher is not None and erc_max_relative_error is not None:
+        bits_per_block, erc_promoted, erc_error_scores = balance_bit_widths_by_error(
+            W,
+            bits_per_block,
+            erc_fisher,
+            block_size=block_size,
+            dim=dim,
+            max_relative_error=erc_max_relative_error,
         )
 
     # Move target dim to the end, then flatten leading dims
@@ -219,6 +330,8 @@ def quantize_blockwise(
         block_size=block_size,
         original_shape=original_shape,
         quant_dim=dim if dim >= 0 else dim,
+        erc_promoted=erc_promoted,
+        erc_error_scores=erc_error_scores,
     )
 
 
