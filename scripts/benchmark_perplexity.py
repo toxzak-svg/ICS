@@ -168,6 +168,8 @@ def ensure_ics_output(args: argparse.Namespace, model_path: str, tokenizer) -> P
         chain_name_filters=tuple(args.chain_filter),
         max_chains=args.max_chains,
         fisher_loss_mode=args.fisher_loss_mode,
+        erc_enabled=not args.disable_erc,
+        erc_max_relative_error=args.erc_max_relative_error,
     )
     result = quantize_model(model, tokenizer, config, device=args.device, show_progress=True)
     from ics.export import save_ics_model
@@ -266,6 +268,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--int4-fraction", type=float, default=0.5)
     parser.add_argument("--int2-fraction", type=float, default=0.4)
     parser.add_argument("--int1-fraction", type=float, default=0.1)
+    parser.add_argument("--erc-max-relative-error", type=float, default=0.10)
+    parser.add_argument("--disable-erc", action="store_true")
     parser.add_argument("--q4-gguf")
     parser.add_argument("--llama-perplexity", default="llama-perplexity")
     parser.add_argument("--llama-ctx", type=int, default=256)

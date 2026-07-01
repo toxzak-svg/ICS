@@ -83,7 +83,7 @@ class ICSConfig:
     max_chains: int | None = None
     fisher_loss_mode: str = "cross_entropy"
     erc_enabled: bool = True
-    erc_max_relative_error: float = 0.25
+    erc_max_relative_error: float = 0.10
 
 
 @dataclass
