@@ -139,12 +139,23 @@ def gptq_quantize(
     H[dead, dead] = 1.0
     W[:, dead] = 0.0
 
-    # 2. Damping: add percdamp * mean(diag(H)) to the diagonal
+    # 2. Permute columns by descending Hessian diagonal ("actorder" from
+    # the reference IST-DASLab/gptq). BOTH W and H must be permuted by the
+    # same perm so that the subsequent error-propagation entries of
+    # H_inv_chol line up with the permuted W columns. The previous version
+    # of this function permuted only W, leaving H_inv_chol in the original
+    # column order -- which made the error propagation a no-op for any
+    # Hessian with structure and worse-than-RTN overall.
+    perm = torch.argsort(torch.diag(H), descending=True).to(torch.int64)
+    W = W[:, perm].contiguous()
+    H = H[perm, :][:, perm].contiguous()
+
+    # 3. Damping: add percdamp * mean(diag(H)) to the diagonal
     damp = percdamp * torch.mean(torch.diag(H))
     diag_idx = torch.arange(in_features, device=device)
     H[diag_idx, diag_idx] += damp
 
-    # 3. Cholesky-based inverse
+    # 4. Cholesky-based inverse
     try:
         L = torch.linalg.cholesky(H)
     except Exception:
@@ -165,11 +176,6 @@ def gptq_quantize(
 
     H_inv = torch.cholesky_inverse(L)
     H_inv_chol = torch.linalg.cholesky(H_inv, upper=True)
-
-    # 4. Permute columns by descending Hessian diagonal (most-important first)
-    perm = torch.argsort(torch.diag(H), descending=True).to(torch.int64)
-    W = W[:, perm].contiguous()
-    # Note: H is no longer needed in the original layout; we permuted W already.
 
     # 5. Blockwise GPTQ
     Q = torch.zeros_like(W)
