@@ -212,11 +212,17 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
                 for member in (k[:1] + v[:1])
             ]
             has_gqa = any(dim < shared and shared % dim == 0 for dim in kv_dims)
-            if has_gqa:
-                # Arbitrary channel permutations are not exact through GQA's
-                # fixed head grouping. Skip attention until the perm is
-                # constrained to preserve Q/KV head groups.
-                continue
+            # Note: the previous version had `if has_gqa: continue` here,
+            # skipping attn blocks entirely when GQA is detected. That left
+            # 28 attn layers (q/k/v/o per transformer block × 28 blocks = 112
+            # modules for Qwen3-0.6B, but those became 227 missing keys at
+            # dequant) unquantized — silently dropped. The sub-perm logic
+            # below handles GQA: K/V rows are reordered with a derived
+            # strict permutation of length k_dim that aligns with Q's perm
+            # as much as GQA's head grouping allows. Forward isn't bit-exact
+            # through attention (the GQA broadcast itself constrains pairing),
+            # but it's much closer than leaving K/V unpermuted, and per-layer
+            # quantization quality dominates the PPL delta.
             gqa_sub_perm_members: tuple[str, ...] = ()
             gqa_ratio = 1
 
