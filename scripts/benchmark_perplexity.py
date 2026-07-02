@@ -1,6 +1,6 @@
-"""Perplexity benchmark harness for Qwen3-0.6B.
+"""Quality benchmark harness for Qwen3-0.6B.
 
-Compares:
+Measures perplexity and reports baseline-relative quality:
     - HF dense baseline (fp16/bf16/fp32 by argument)
     - optional ICS-dequantized weights loaded into the HF model
     - optional llama.cpp GGUF Q4_K_M via llama-perplexity
@@ -50,6 +50,9 @@ class BenchmarkResult:
     error: str | None = None
 
 
+QualitySummary = dict[str, object]
+
+
 def perplexity_from_nll(total_nll: float, token_count: int) -> float:
     if token_count <= 0:
         raise ValueError("token_count must be positive")
@@ -69,16 +72,89 @@ def parse_llama_perplexity(output: str) -> float:
     raise ValueError("could not parse llama.cpp perplexity from output")
 
 
-def format_results_table(results: Sequence[BenchmarkResult]) -> str:
+def summarize_quality(
+    results: Sequence[BenchmarkResult],
+    baseline_name: str,
+    min_quality_score: float,
+) -> QualitySummary:
+    """Summarize candidate quality relative to a dense baseline.
+
+    Quality score is `baseline_perplexity / candidate_perplexity`, so 1.0
+    matches the baseline and lower values indicate degradation.
+    """
+    by_name = {result.name: result for result in results}
+    baseline = by_name.get(baseline_name)
+    summary: QualitySummary = {
+        "baseline": baseline_name,
+        "baseline_perplexity": baseline.perplexity if baseline else None,
+        "threshold": min_quality_score,
+        "candidates": {},
+    }
+    candidates = summary["candidates"]
+    assert isinstance(candidates, dict)
+
+    if baseline is None or baseline.perplexity is None or baseline.perplexity <= 0:
+        for result in results:
+            candidates[result.name] = {
+                "quality_score": None,
+                "ppl_ratio": None,
+                "status": "unavailable",
+                "note": "baseline unavailable",
+            }
+        return summary
+
+    for result in results:
+        if result.name == baseline_name:
+            candidates[result.name] = {
+                "quality_score": 1.0,
+                "ppl_ratio": 1.0,
+                "status": "baseline",
+                "note": result.error or "",
+            }
+            continue
+        if result.perplexity is None or result.perplexity <= 0:
+            candidates[result.name] = {
+                "quality_score": None,
+                "ppl_ratio": None,
+                "status": "unavailable",
+                "note": result.error or "perplexity unavailable",
+            }
+            continue
+        quality_score = baseline.perplexity / result.perplexity
+        candidates[result.name] = {
+            "quality_score": quality_score,
+            "ppl_ratio": result.perplexity / baseline.perplexity,
+            "status": "pass" if quality_score >= min_quality_score else "fail",
+            "note": result.error or "",
+        }
+    return summary
+
+
+def _quality_cell(result: BenchmarkResult, quality: QualitySummary | None) -> tuple[str, str]:
+    if not quality:
+        return "", ""
+    candidates = quality.get("candidates")
+    if not isinstance(candidates, dict):
+        return "", ""
+    entry = candidates.get(result.name)
+    if not isinstance(entry, dict):
+        return "", ""
+    score = entry.get("quality_score")
+    score_text = "unavailable" if score is None else f"{float(score):.4f}"
+    return score_text, str(entry.get("status", ""))
+
+
+def format_results_table(results: Sequence[BenchmarkResult], quality: QualitySummary | None = None) -> str:
     lines = [
-        "| model | perplexity | tokens | seconds | note |",
-        "| --- | ---: | ---: | ---: | --- |",
+        "| model | perplexity | quality | status | tokens | seconds | note |",
+        "| --- | ---: | ---: | --- | ---: | ---: | --- |",
     ]
     for result in results:
         ppl = "unavailable" if result.perplexity is None else f"{result.perplexity:.4f}"
+        quality_score, status = _quality_cell(result, quality)
         note = result.error or ""
         lines.append(
-            f"| {result.name} | {ppl} | {result.token_count} | "
+            f"| {result.name} | {ppl} | {quality_score} | {status} | {result.token_count} | "
             f"{result.seconds:.1f} | {note} |"
         )
     return "\n".join(lines)
@@ -247,7 +323,7 @@ def _dtype_from_arg(dtype: str) -> torch.dtype:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark Qwen3-0.6B perplexity")
+    parser = argparse.ArgumentParser(description="Benchmark Qwen3-0.6B quality")
     parser.add_argument("--model", default="Qwen/Qwen3-0.6B")
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     parser.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
@@ -275,6 +351,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llama-ctx", type=int, default=256)
     parser.add_argument("--llama-batch", type=int, default=128)
     parser.add_argument("--llama-chunks", type=int, default=1)
+    parser.add_argument(
+        "--quality-baseline",
+        default=None,
+        help="Result name to use as quality baseline. Defaults to --dtype.",
+    )
+    parser.add_argument(
+        "--min-quality-score",
+        type=float,
+        default=0.90,
+        help="Minimum baseline-relative quality score for pass/fail labeling.",
+    )
     return parser.parse_args()
 
 
@@ -299,7 +386,12 @@ def main() -> int:
     results.append(benchmark_ics(args, model_path, input_ids, ics_output))
     results.append(benchmark_q4(args, eval_text))
 
-    table = format_results_table(results)
+    quality = summarize_quality(
+        results,
+        baseline_name=args.quality_baseline or args.dtype,
+        min_quality_score=args.min_quality_score,
+    )
+    table = format_results_table(results, quality)
     print(table)
 
     payload = {
@@ -307,6 +399,7 @@ def main() -> int:
         "model_path": model_path,
         "max_eval_tokens": args.max_eval_tokens,
         "block_size": args.block_size,
+        "quality_summary": quality,
         "results": [asdict(r) for r in results],
     }
     Path(args.output_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")

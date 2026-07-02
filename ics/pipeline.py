@@ -49,6 +49,7 @@ class ICSConfig:
         method: "composite" (fast) or "sinkhorn_hungarian" (clean).
         calibration_texts: list of strings for Fisher computation.
         max_calibration_length: max tokens per calibration sample.
+        skip_apply: when True, skip the chain-perm apply step (debug aid).
         skip_modules: dotted-path substrings; modules matching any
             substring are skipped (e.g. "lm_head", "embed_tokens").
         erc_enabled: when True, promote unsafe INT1/INT2 blocks to INT4
@@ -60,7 +61,7 @@ class ICSConfig:
     int4_fraction: float = 0.5
     int2_fraction: float = 0.4
     int1_fraction: float = 0.1
-    quant_method: str = "block"  # "block" (per-block INT) or "gptq" (Hessian-based)
+    quant_method: str = "block"  # "block" (per-block INT), "gptq" (Hessian-based), or "per_row_int4" (one scale per output row)
     gptq_group_size: int = 128    # GPTQ: number of columns per scale group
     gptq_percdamp: float = 0.01   # GPTQ: relative Hessian damping
     gptq_blocksize: int = 128     # GPTQ: process this many columns at a time
@@ -69,6 +70,7 @@ class ICSConfig:
     method: str = "composite"
     calibration_texts: Sequence[str] = field(default_factory=list)
     max_calibration_length: int = 256
+    skip_apply: bool = False
     skip_modules: tuple[str, ...] = (
         "lm_head",
         "embed_tokens",
@@ -770,10 +772,13 @@ def quantize_model(
 
     if show_progress:
         print("[4/5] Applying permutations to weights...", flush=True)
-    for chain in chains:
-        key = "/".join(chain.members)
-        F = fisher_norm[chain.fisher_source]
-        apply_chain(model, chain, perms[key], F)
+    if not getattr(config, "skip_apply", False):
+        for chain in chains:
+            key = "/".join(chain.members)
+            F = fisher_norm[chain.fisher_source]
+            apply_chain(model, chain, perms[key], F)
+    else:
+        print("      (skip_apply=True, leaving weights unchanged)", flush=True)
 
     if show_progress:
         print("[5/5] Quantizing layers...", flush=True)
@@ -859,6 +864,31 @@ def quantize_model(
                 layer_perms[n] = gptq_perm
         if show_progress:
             print(f"      GPTQ quantized {len(quant)} layers", flush=True)
+    elif config.quant_method == "per_row_int4":
+        # Per-row symmetric INT4: one scale per output channel, INT4 within
+        # each row. Robust against outlier-dominated weight distributions
+        # (which break per-group INT4 because the absmax-based per-group
+        # scale gets dominated by a single outlier). Tradeoff: scales are
+        # O(out_features) per layer instead of O(in_features/group_size),
+        # but absolute storage overhead is small (e.g. 12KB per 3072-row
+        # layer).
+        for chain in chains:
+            for n, target in zip(chain.members, chain.perm_targets):
+                if n in quant:
+                    continue
+                mod = _get_module(model, n)
+                if not isinstance(mod, nn.Linear):
+                    continue
+                W = mod.weight.detach().float().cpu()
+                out_f, in_f = W.shape
+                # Per-row INT4: block_size=1 along dim=0 (output rows).
+                # Each block contains all in_features values for one row.
+                bits = torch.full((out_f,), 4, dtype=torch.int32)
+                qt = quantize_blockwise(W, bits, block_size=1, dim=0)
+                quant[n] = qt
+                bit_widths[n] = qt.bits
+        if show_progress:
+            print(f"      Per-row INT4 quantized {len(quant)} layers", flush=True)
     else:
         # Original per-block path.
         for chain in chains:

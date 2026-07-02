@@ -185,9 +185,14 @@ $ python scripts/run_qwen3_06b_pipeline.py --local-files-only --offline --max-ca
 The forward-pass residuals are FP32 roundoff — the math
 $X(W_A P^T)(P W_B) = X W_A W_B$ is exact.
 
-## Benchmark status
+## Quality status
 
-`scripts/benchmark_perplexity.py` compares:
+`scripts/benchmark_perplexity.py` still measures perplexity, but the report now
+uses baseline-relative **quality** as the decision signal. The dense baseline is
+quality `1.0`; each candidate gets `baseline_ppl / candidate_ppl`, plus a
+`pass`/`fail` status against `--min-quality-score` (default `0.90`).
+
+The harness compares:
 
 - Hugging Face dense baseline (`--dtype fp16`, `bf16`, or `fp32`)
 - ICS-dequantized weights loaded back into the HF model
@@ -206,23 +211,29 @@ python scripts/benchmark_perplexity.py \
     --max-chains 1 \
     --q4-gguf <qwen3-0.6b-q4_k_m.gguf> \
     --llama-ctx 16 \
+    --min-quality-score 0.90 \
     --output-json perplexity_results_qwen3_06b.json
 ```
+
+Use `quality_summary` in the output JSON as the gate from now on. The raw
+perplexity values are diagnostic evidence, not the final acceptance label.
 
 Current Qwen3-0.6B tiny smoke result is recorded in
 `benchmarks/qwen3_06b_perplexity_smoke.json`:
 
-| model | perplexity | tokens | note |
-| --- | ---: | ---: | --- |
-| fp16 | 92.9362 | 49 | HF dense baseline |
-| ics_dequantized | 4702612.5630 | 49 | one-chain smoke artifact; not full-model ICS |
-| q4_k_m | 216.8099 | 16 | llama.cpp Q4_K_M GGUF |
+| model | perplexity | quality | status | tokens | note |
+| --- | ---: | ---: | --- | ---: | --- |
+| fp16 | 92.9362 | 1.0000 | baseline | 49 | HF dense baseline |
+| ics_dequantized | 4702612.5630 | 0.0000 | fail | 49 | one-chain smoke artifact; not full-model ICS |
+| q4_k_m | 216.8099 | 0.4287 | fail | 16 | llama.cpp Q4_K_M GGUF |
 
 These are not Qwen3.5-2B report numbers and not reportable WikiText-2 numbers.
 They use the built-in tiny eval text so the harness can complete on CPU. For
 meaningful reporting, pass a fixed dataset text file with `--eval-text-file`,
 raise `--max-eval-tokens`, and run the full Qwen3.5-2B ICS artifact instead of
-the one-chain 0.6B smoke artifact.
+the one-chain 0.6B smoke artifact. The acceptance question should be "does the
+candidate preserve enough baseline-relative quality?", not "is the raw PPL
+finite?".
 
 ## Caveats / honest gaps
 
