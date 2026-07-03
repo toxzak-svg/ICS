@@ -1,0 +1,54 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "model_path": "C:\\Users\\Zwmar\\.cache\\huggingface\\hub\\models--Qwen--Qwen3-0.6B\\snapshots\\c1899de289a04d12100db370d81485cdf75e47ca",
+  "max_eval_tokens": 2048,
+  "block_size": 64,
+  "quality_summary": {
+    "baseline": "fp16",
+    "baseline_perplexity": 92.93617607702829,
+    "threshold": 0.9,
+    "candidates": {
+      "fp16": {
+        "quality_score": 1.0,
+        "ppl_ratio": 1.0,
+        "status": "baseline",
+        "note": ""
+      },
+      "ics_dequantized": {
+        "quality_score": 1.2704424769411726,
+        "ppl_ratio": 0.7871273340983423,
+        "status": "pass",
+        "note": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "q4_k_m": {
+        "quality_score": null,
+        "ppl_ratio": null,
+        "status": "unavailable",
+        "note": "no --q4-gguf provided"
+      }
+    }
+  },
+  "results": [
+    {
+      "name": "fp16",
+      "perplexity": 92.93617607702829,
+      "token_count": 49,
+      "seconds": 7.9786927700042725,
+      "error": null
+    },
+    {
+      "name": "ics_dequantized",
+      "perplexity": 73.15260451680543,
+      "token_count": 49,
+      "seconds": 8.062839031219482,
+      "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
+    },
+    {
+      "name": "q4_k_m",
+      "perplexity": null,
+      "token_count": 0,
+      "seconds": 0.0,
+      "error": "no --q4-gguf provided"
+    }
+  ]
+}

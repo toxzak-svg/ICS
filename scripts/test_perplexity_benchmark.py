@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -12,6 +13,7 @@ from scripts.benchmark_perplexity import (
     BenchmarkResult,
     format_results_table,
     parse_llama_perplexity,
+    parse_args,
     perplexity_from_nll,
     summarize_quality,
 )
@@ -91,6 +93,13 @@ def test_format_results_table_shows_quality_status():
     assert "| ics_dequantized | 22.0000 | 0.9091 | pass | 128 | 1.4 |  |" in table
 
 
+def test_parse_args_accepts_per_row_quant_method():
+    with patch.object(sys, "argv", ["benchmark_perplexity.py", "--quant-method", "per_row_int4"]):
+        args = parse_args()
+
+    assert args.quant_method == "per_row_int4"
+
+
 def main() -> int:
     tests = [
         test_perplexity_from_nll,
@@ -100,6 +109,7 @@ def main() -> int:
         test_summarize_quality_scores_candidates_relative_to_baseline,
         test_summarize_quality_keeps_unavailable_candidates_out_of_gate,
         test_format_results_table_shows_quality_status,
+        test_parse_args_accepts_per_row_quant_method,
     ]
     failures = []
     for test in tests:

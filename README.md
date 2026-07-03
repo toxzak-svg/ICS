@@ -205,6 +205,7 @@ python scripts/benchmark_perplexity.py \
     --local-files-only \
     --offline \
     --dtype fp16 \
+    --quant-method per_row_int4 \
     --max-eval-tokens 128 \
     --max-calibration-samples 1 \
     --max-calibration-length 8 \
@@ -217,6 +218,26 @@ python scripts/benchmark_perplexity.py \
 
 Use `quality_summary` in the output JSON as the gate from now on. The raw
 perplexity values are diagnostic evidence, not the final acceptance label.
+When rebuilding `--ics-output`, `--quant-method per_row_int4` is the current
+outlier-robust path; `block` is the older mixed INT4/INT2/INT1 path, and `gptq`
+is the Hessian-based diagnostic path.
+
+For a sequential method sweep and publishable package, use:
+
+```bash
+python scripts/benchmark_matrix.py \
+    --model Qwen/Qwen3-0.6B \
+    --local-files-only \
+    --offline \
+    --dtype fp16 \
+    --methods block,gptq,per_row_int4 \
+    --output-dir benchmarks/qwen3_06b_harness \
+    --scratch-dir .pytest_cache/ics_harness
+```
+
+The matrix runner writes `manifest.json`, `RESULTS.md`, and
+`package_manifest.json` under `benchmarks/qwen3_06b_harness`, while large
+method artifacts and zip packages remain under `.pytest_cache/ics_harness`.
 
 Current Qwen3-0.6B tiny smoke result is recorded in
 `benchmarks/qwen3_06b_perplexity_smoke.json`:
@@ -234,6 +255,8 @@ raise `--max-eval-tokens`, and run the full Qwen3.5-2B ICS artifact instead of
 the one-chain 0.6B smoke artifact. The acceptance question should be "does the
 candidate preserve enough baseline-relative quality?", not "is the raw PPL
 finite?".
+
+See `docs/PRIOR_ART.md` for the current prior-art map and novelty caveats.
 
 ## Caveats / honest gaps
 

@@ -23,12 +23,15 @@ gpu = ["accelerate>=0.27"]
 
 [project.scripts]
 ics-quant = "scripts.colab_quantize_ics:main"
+ics-benchmark = "scripts.benchmark_perplexity:main"
+ics-benchmark-matrix = "scripts.benchmark_matrix:main"
+ics-qwen35 = "scripts.colab_quantize_qwen35:main"
 ics-test-correctness = "scripts.test_correctness:main"
 ics-test-pipeline = "scripts.test_pipeline_smoke:main"
 
 [tool.setuptools.packages.find]
-include = ["ics*"]
-exclude = ["tests*", "scripts*"]
+include = ["ics*", "scripts*"]
+exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 ics = ["py.typed"]

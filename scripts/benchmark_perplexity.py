@@ -239,6 +239,7 @@ def ensure_ics_output(args: argparse.Namespace, model_path: str, tokenizer) -> P
         int4_fraction=args.int4_fraction,
         int2_fraction=args.int2_fraction,
         int1_fraction=args.int1_fraction,
+        quant_method=args.quant_method,
         calibration_texts=DEFAULT_CALIBRATION[: args.max_calibration_samples],
         max_calibration_length=args.max_calibration_length,
         chain_name_filters=tuple(args.chain_filter),
@@ -344,6 +345,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--int4-fraction", type=float, default=0.5)
     parser.add_argument("--int2-fraction", type=float, default=0.4)
     parser.add_argument("--int1-fraction", type=float, default=0.1)
+    parser.add_argument(
+        "--quant-method",
+        choices=["block", "gptq", "per_row_int4"],
+        default="per_row_int4",
+        help=(
+            "ICS quantizer to use when rebuilding --ics-output. "
+            "per_row_int4 is the current Qwen3-0.6B quality path; block is the "
+            "older variable-bit path; gptq is the Hessian-based diagnostic path."
+        ),
+    )
     parser.add_argument("--erc-max-relative-error", type=float, default=0.10)
     parser.add_argument("--disable-erc", action="store_true")
     parser.add_argument("--q4-gguf")

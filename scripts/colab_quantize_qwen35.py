@@ -118,6 +118,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--int4-fraction", type=float, default=0.5)
     p.add_argument("--int2-fraction", type=float, default=0.4)
     p.add_argument("--int1-fraction", type=float, default=0.1)
+    p.add_argument(
+        "--quant-method",
+        choices=["block", "gptq", "per_row_int4"],
+        default="per_row_int4",
+        help="quantization backend; per_row_int4 is the current outlier-robust default",
+    )
     p.add_argument("--alpha", type=float, default=1.0)
     p.add_argument("--beta", type=float, default=1.0)
     p.add_argument("--method", choices=["composite", "sinkhorn_hungarian"], default="composite")
@@ -194,6 +200,7 @@ def main() -> int:
         int4_fraction=args.int4_fraction,
         int2_fraction=args.int2_fraction,
         int1_fraction=args.int1_fraction,
+        quant_method=args.quant_method,
         alpha=args.alpha,
         beta=args.beta,
         method=args.method,

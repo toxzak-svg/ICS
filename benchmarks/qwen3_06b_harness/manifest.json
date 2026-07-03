@@ -1,0 +1,272 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "methods": [
+    "block",
+    "gptq",
+    "per_row_int4"
+  ],
+  "dtype": "fp16",
+  "device": "cpu",
+  "eval_text_file": null,
+  "eval_label": "smoke",
+  "max_eval_tokens": 2048,
+  "max_calibration_samples": 24,
+  "max_calibration_length": 256,
+  "min_quality_score": 0.9,
+  "git": {
+    "commit": "892adacd40b7c87f4bae14a7d306997dddf47708",
+    "dirty": true,
+    "changed_files": [
+      "README.md",
+      "ics/__pycache__/export.cpython-314.pyc",
+      "ics/__pycache__/pipeline.cpython-314.pyc",
+      "ics/__pycache__/quantize.cpython-314.pyc",
+      "pyproject.toml",
+      "scripts/benchmark_perplexity.py",
+      "scripts/colab_quantize_ics.py",
+      "scripts/colab_quantize_qwen35.py",
+      "scripts/test_perplexity_benchmark.py",
+      "benchmarks/qwen3_06b_harness/",
+      "docs/PRIOR_ART.md",
+      "scripts/benchmark_matrix.py",
+      "scripts/test_benchmark_matrix.py",
+      "scripts/test_packaging_config.py"
+    ]
+  },
+  "runs": [
+    {
+      "method": "block",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "scripts/benchmark_perplexity.py",
+        "--model",
+        "Qwen/Qwen3-0.6B",
+        "--device",
+        "cpu",
+        "--dtype",
+        "fp16",
+        "--quant-method",
+        "block",
+        "--ics-output",
+        ".pytest_cache\\ics_harness\\artifacts\\qwen06_block",
+        "--output-json",
+        "benchmarks\\qwen3_06b_harness\\runs\\qwen06_block.json",
+        "--max-eval-tokens",
+        "2048",
+        "--max-calibration-samples",
+        "24",
+        "--max-calibration-length",
+        "256",
+        "--min-quality-score",
+        "0.9",
+        "--rebuild-ics",
+        "--local-files-only",
+        "--offline"
+      ],
+      "returncode": 0,
+      "seconds": 124.66476917266846,
+      "run_json": "benchmarks\\qwen3_06b_harness\\runs\\qwen06_block.json",
+      "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_block",
+      "baseline": {
+        "name": "fp16",
+        "perplexity": 92.93617607702829,
+        "token_count": 49,
+        "seconds": 8.36427640914917,
+        "error": null
+      },
+      "candidate": {
+        "name": "ics_dequantized",
+        "perplexity": 26449.983196071582,
+        "token_count": 49,
+        "seconds": 8.941198110580444,
+        "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "q4_k_m": {
+        "name": "q4_k_m",
+        "perplexity": null,
+        "token_count": 0,
+        "seconds": 0.0,
+        "error": "no --q4-gguf provided"
+      },
+      "quality": {
+        "quality_score": 0.0035136572824300094,
+        "ppl_ratio": 284.60373895897163,
+        "status": "fail",
+        "note": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "artifact": {
+        "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_block",
+        "artifact_bytes": 15984784,
+        "artifact_mib": 15.244277954101562,
+        "quantized_tensor_count": 4,
+        "dense_parameter_count": 6291456,
+        "estimated_bpw": 20.325703938802082,
+        "quant_method": "block",
+        "erc_enabled": true,
+        "erc_max_relative_error": 0.1,
+        "dequantized_tensors_loaded": 4,
+        "base_tensors_unchanged": 307
+      },
+      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 8.4 |  |\n| ics_dequantized | 26449.9832 | 0.0035 | fail | 49 | 8.9 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_block.json\n",
+      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  35%|###5      | 110/311 [00:00<00:00, 1099.73it/s]\nLoading weights:  78%|#######8  | 243/311 [00:00<00:00, 1225.63it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1254.09it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  32%|###1      | 98/311 [00:00<00:00, 971.62it/s]\nLoading weights:  72%|#######2  | 224/311 [00:00<00:00, 1136.96it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1212.62it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:   0%|          | 1/311 [00:00<02:19,  2.22it/s]\nLoading weights:  60%|######    | 188/311 [00:00<00:00, 449.48it/s]\nLoading weights:  95%|#########5| 296/311 [00:00<00:00, 552.85it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 443.95it/s]\n"
+    },
+    {
+      "method": "gptq",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "scripts/benchmark_perplexity.py",
+        "--model",
+        "Qwen/Qwen3-0.6B",
+        "--device",
+        "cpu",
+        "--dtype",
+        "fp16",
+        "--quant-method",
+        "gptq",
+        "--ics-output",
+        ".pytest_cache\\ics_harness\\artifacts\\qwen06_gptq",
+        "--output-json",
+        "benchmarks\\qwen3_06b_harness\\runs\\qwen06_gptq.json",
+        "--max-eval-tokens",
+        "2048",
+        "--max-calibration-samples",
+        "24",
+        "--max-calibration-length",
+        "256",
+        "--min-quality-score",
+        "0.9",
+        "--rebuild-ics",
+        "--local-files-only",
+        "--offline"
+      ],
+      "returncode": 0,
+      "seconds": 141.03242325782776,
+      "run_json": "benchmarks\\qwen3_06b_harness\\runs\\qwen06_gptq.json",
+      "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_gptq",
+      "baseline": {
+        "name": "fp16",
+        "perplexity": 92.93617607702829,
+        "token_count": 49,
+        "seconds": 7.9786927700042725,
+        "error": null
+      },
+      "candidate": {
+        "name": "ics_dequantized",
+        "perplexity": 73.15260451680543,
+        "token_count": 49,
+        "seconds": 8.062839031219482,
+        "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "q4_k_m": {
+        "name": "q4_k_m",
+        "perplexity": null,
+        "token_count": 0,
+        "seconds": 0.0,
+        "error": "no --q4-gguf provided"
+      },
+      "quality": {
+        "quality_score": 1.2704424769411726,
+        "ppl_ratio": 0.7871273340983423,
+        "status": "pass",
+        "note": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "artifact": {
+        "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_gptq",
+        "artifact_bytes": 17959622,
+        "artifact_mib": 17.12763023376465,
+        "quantized_tensor_count": 4,
+        "dense_parameter_count": 6291456,
+        "estimated_bpw": 22.8368403116862,
+        "quant_method": "gptq",
+        "erc_enabled": true,
+        "erc_max_relative_error": 0.1,
+        "dequantized_tensors_loaded": 4,
+        "base_tensors_unchanged": 307
+      },
+      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n      computing per-layer Hessian on calibration data...\n      Hessians for 4 layers\n      GPTQ quantized 4 layers\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 8.0 |  |\n| ics_dequantized | 73.1526 | 1.2704 | pass | 49 | 8.1 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_gptq.json\n",
+      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  41%|####      | 127/311 [00:00<00:00, 1259.49it/s]\nLoading weights:  81%|########1 | 253/311 [00:00<00:00, 1231.69it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1228.52it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  41%|####1     | 128/311 [00:00<00:00, 1279.54it/s]\nLoading weights:  85%|########5 | 265/311 [00:00<00:00, 1319.92it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1345.62it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  43%|####2     | 133/311 [00:00<00:00, 1316.27it/s]\nLoading weights:  85%|########5 | 265/311 [00:00<00:00, 1281.55it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1287.59it/s]\n"
+    },
+    {
+      "method": "per_row_int4",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "scripts/benchmark_perplexity.py",
+        "--model",
+        "Qwen/Qwen3-0.6B",
+        "--device",
+        "cpu",
+        "--dtype",
+        "fp16",
+        "--quant-method",
+        "per_row_int4",
+        "--ics-output",
+        ".pytest_cache\\ics_harness\\artifacts\\qwen06_per_row_int4",
+        "--output-json",
+        "benchmarks\\qwen3_06b_harness\\runs\\qwen06_per_row_int4.json",
+        "--max-eval-tokens",
+        "2048",
+        "--max-calibration-samples",
+        "24",
+        "--max-calibration-length",
+        "256",
+        "--min-quality-score",
+        "0.9",
+        "--rebuild-ics",
+        "--local-files-only",
+        "--offline"
+      ],
+      "returncode": 0,
+      "seconds": 121.82683873176575,
+      "run_json": "benchmarks\\qwen3_06b_harness\\runs\\qwen06_per_row_int4.json",
+      "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_per_row_int4",
+      "baseline": {
+        "name": "fp16",
+        "perplexity": 92.93617607702829,
+        "token_count": 49,
+        "seconds": 8.514298677444458,
+        "error": null
+      },
+      "candidate": {
+        "name": "ics_dequantized",
+        "perplexity": 131.00005479062318,
+        "token_count": 49,
+        "seconds": 8.20517873764038,
+        "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "q4_k_m": {
+        "name": "q4_k_m",
+        "perplexity": null,
+        "token_count": 0,
+        "seconds": 0.0,
+        "error": "no --q4-gguf provided"
+      },
+      "quality": {
+        "quality_score": 0.7094361618822815,
+        "ppl_ratio": 1.4095700976769951,
+        "status": "fail",
+        "note": "4 dequantized tensors loaded; 307 base tensors unchanged"
+      },
+      "artifact": {
+        "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_per_row_int4",
+        "artifact_bytes": 17958363,
+        "artifact_mib": 17.126429557800293,
+        "quantized_tensor_count": 4,
+        "dense_parameter_count": 6291456,
+        "estimated_bpw": 22.83523941040039,
+        "quant_method": "per_row_int4",
+        "erc_enabled": true,
+        "erc_max_relative_error": 0.1,
+        "dequantized_tensors_loaded": 4,
+        "base_tensors_unchanged": 307
+      },
+      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n      Per-row INT4 quantized 4 layers\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 8.5 |  |\n| ics_dequantized | 131.0001 | 0.7094 | fail | 49 | 8.2 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_per_row_int4.json\n",
+      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  33%|###3      | 103/311 [00:00<00:00, 1028.16it/s]\nLoading weights:  78%|#######7  | 242/311 [00:00<00:00, 1240.09it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1257.41it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  44%|####3     | 136/311 [00:00<00:00, 1352.36it/s]\nLoading weights:  93%|#########3| 290/311 [00:00<00:00, 1445.28it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1447.83it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  43%|####3     | 134/311 [00:00<00:00, 1321.97it/s]\nLoading weights:  86%|########5 | 267/311 [00:00<00:00, 1291.59it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1285.64it/s]\n"
+    }
+  ],
+  "caveats": [
+    "PPL is the measured quantity; acceptance uses baseline-relative quality.",
+    "Built-in eval text is a smoke check, not paper-grade evidence.",
+    "gptq is the local ICS GPTQ backend, not a new GPTQ algorithm claim.",
+    "External AWQ/RPTQ/QuaRot/SpinQuant baselines are intentionally out of v1."
+  ]
+}
