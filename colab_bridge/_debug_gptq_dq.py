@@ -17,7 +17,7 @@ if "ics" in sys.modules:
 sys.path.insert(0, "/content/ICS")
 
 import torch
-from ics.export import load_ics_model, dequantize_gptq_per_group
+from ics.export import load_ics_model
 from transformers import AutoModelForCausalLM
 from ics.gptq import gptq_quantize, dequantize_gptq
 import bitsandbytes as bnb

@@ -187,26 +187,6 @@ def load_ics_model(output_dir: str | Path) -> dict[str, Any]:
     }
 
 
-def dequantize_gptq_per_group(qt) -> torch.Tensor:
-    """Dequantize a QuantizedTensor that was stored by the GPTQ path.
-
-    The GPTQ path stores the qdata in natural row-major layout
-    (out_features, in_features). The dequantize_blockwise function
-    expects a different "block-row-major" layout, so we need a
-    separate dequant path for GPTQ-stored tensors.
-    """
-    out_features, in_features = qt.original_shape
-    qdata_2d = qt.qdata.reshape(out_features, in_features).float()
-    n_groups = qt.scales.shape[0]
-    group_size = in_features // n_groups
-    W = torch.zeros((out_features, in_features), dtype=torch.float32)
-    for g in range(n_groups):
-        s = g * group_size
-        e = (g + 1) * group_size
-        W[:, s:e] = (qdata_2d[:, s:e] - float(qt.zeros[g].item())) * float(qt.scales[g].item())
-    return W
-
-
 def dequantized_state_dict(loaded: dict[str, Any]) -> dict[str, torch.Tensor]:
     """Build a dense (dequantized) state-dict for verification loading.
 

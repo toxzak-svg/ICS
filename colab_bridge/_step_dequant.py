@@ -17,7 +17,7 @@ if "ics" in sys.modules:
 sys.path.insert(0, "/content/ICS")
 
 import torch
-from ics.export import load_ics_model, dequantize_gptq_per_group
+from ics.export import load_ics_model
 from ics.quantize import dequantize_blockwise
 from transformers import AutoModelForCausalLM
 
@@ -31,42 +31,24 @@ qt = loaded["layers"][q_name]
 print(f"qt.method: {qt.method}")
 print(f"qt block_size: {qt.block_size}")
 
-# 1. dequantize_gptq_per_group
-W_dq_gptq = dequantize_gptq_per_group(qt)
-print(f"W_dq_gptq shape: {W_dq_gptq.shape}, sample [0, :5]: {W_dq_gptq[0, :5].tolist()}")
+# 1. Dequantize the saved GPTQ block-row-major layout.
+W_dq = dequantize_blockwise(qt)
+print(f"W_dq shape: {W_dq.shape}, sample [0, :5]: {W_dq[0, :5].tolist()}")
 
-# 2. dequantize_blockwise (old path)
-W_dq_block = dequantize_blockwise(qt)
-print(f"W_dq_block shape: {W_dq_block.shape}, sample [0, :5]: {W_dq_block[0, :5].tolist()}")
-
-# 3. Apply GPTQ col un-perm to W_dq_gptq
+# 2. Apply GPTQ col un-perm.
 gptq_perm = torch.tensor(loaded["layer_perms"][q_name], dtype=torch.long)
-W_after_gptq_unperm = torch.zeros_like(W_dq_gptq)
-W_after_gptq_unperm[:, gptq_perm] = W_dq_gptq
+W_after_gptq_unperm = torch.zeros_like(W_dq)
+W_after_gptq_unperm[:, gptq_perm] = W_dq
 print(f"W_after_gptq_unperm sample [0, :5]: {W_after_gptq_unperm[0, :5].tolist()}")
 
-# 4. Apply GPTQ col un-perm to W_dq_block
-W_block_unperm = torch.zeros_like(W_dq_block)
-W_block_unperm[:, gptq_perm] = W_dq_block
-print(f"W_block_unperm sample [0, :5]: {W_block_unperm[0, :5].tolist()}")
-
-# 5. Apply chain un-perm (target=0 row perm)
+# 3. Apply chain un-perm (target=0 row perm).
 chain_info = loaded["chain_members"][f"{q_name}/{q_name.replace('q_proj', 'o_proj')}"]
 chain_perm = torch.tensor(chain_info["permutation"], dtype=torch.long)
 
 W_orig = torch.zeros_like(W_after_gptq_unperm)
 W_orig[chain_perm] = W_after_gptq_unperm
 diff = (W_orig - sd_ref[q_name + ".weight"].float()).abs()
-print(f"\nAfter dequantize_gptq_per_group + un-perms vs ref: max={diff.max().item():.4f} mean={diff.mean().item():.4f}")
-
-W_orig2 = torch.zeros_like(W_block_unperm)
-W_orig2[chain_perm] = W_block_unperm
-diff = (W_orig2 - sd_ref[q_name + ".weight"].float()).abs()
-print(f"After dequantize_blockwise + un-perms vs ref: max={diff.max().item():.4f} mean={diff.mean().item():.4f}")
-
-# Check: are the two dequant results the same?
-diff = (W_dq_gptq - W_dq_block).abs()
-print(f"\ndequantize_gptq vs dequantize_blockwise: max={diff.max().item():.4f} mean={diff.mean().item():.4f}")
+print(f"\nAfter dequantize_blockwise + un-perms vs ref: max={diff.max().item():.4f} mean={diff.mean().item():.4f}")
 '''
 
 r = c.exec(script, timeout=300)

@@ -14,23 +14,12 @@
   "max_calibration_length": 256,
   "min_quality_score": 0.9,
   "git": {
-    "commit": "892adacd40b7c87f4bae14a7d306997dddf47708",
+    "commit": "4038de3112f62b7507d04ad2b7af32c6632ecd4b",
     "dirty": true,
     "changed_files": [
-      "README.md",
-      "ics/__pycache__/export.cpython-314.pyc",
-      "ics/__pycache__/pipeline.cpython-314.pyc",
-      "ics/__pycache__/quantize.cpython-314.pyc",
-      "pyproject.toml",
-      "scripts/benchmark_perplexity.py",
-      "scripts/colab_quantize_ics.py",
-      "scripts/colab_quantize_qwen35.py",
-      "scripts/test_perplexity_benchmark.py",
-      "benchmarks/qwen3_06b_harness/",
-      "docs/PRIOR_ART.md",
-      "scripts/benchmark_matrix.py",
-      "scripts/test_benchmark_matrix.py",
-      "scripts/test_packaging_config.py"
+      "benchmarks/qwen3_06b_harness/runs/qwen06_block.json",
+      "benchmarks/qwen3_06b_harness/runs/qwen06_gptq.json",
+      "benchmarks/qwen3_06b_harness/runs/qwen06_per_row_int4.json"
     ]
   },
   "runs": [
@@ -64,21 +53,21 @@
         "--offline"
       ],
       "returncode": 0,
-      "seconds": 124.66476917266846,
+      "seconds": 194.81251692771912,
       "run_json": "benchmarks\\qwen3_06b_harness\\runs\\qwen06_block.json",
       "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_block",
       "baseline": {
         "name": "fp16",
         "perplexity": 92.93617607702829,
         "token_count": 49,
-        "seconds": 8.36427640914917,
+        "seconds": 11.541568756103516,
         "error": null
       },
       "candidate": {
         "name": "ics_dequantized",
         "perplexity": 26449.983196071582,
         "token_count": 49,
-        "seconds": 8.941198110580444,
+        "seconds": 9.308122158050537,
         "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
       },
       "q4_k_m": {
@@ -107,8 +96,8 @@
         "dequantized_tensors_loaded": 4,
         "base_tensors_unchanged": 307
       },
-      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 8.4 |  |\n| ics_dequantized | 26449.9832 | 0.0035 | fail | 49 | 8.9 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_block.json\n",
-      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  35%|###5      | 110/311 [00:00<00:00, 1099.73it/s]\nLoading weights:  78%|#######8  | 243/311 [00:00<00:00, 1225.63it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1254.09it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  32%|###1      | 98/311 [00:00<00:00, 971.62it/s]\nLoading weights:  72%|#######2  | 224/311 [00:00<00:00, 1136.96it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1212.62it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:   0%|          | 1/311 [00:00<02:19,  2.22it/s]\nLoading weights:  60%|######    | 188/311 [00:00<00:00, 449.48it/s]\nLoading weights:  95%|#########5| 296/311 [00:00<00:00, 552.85it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 443.95it/s]\n"
+      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 11.5 |  |\n| ics_dequantized | 26449.9832 | 0.0035 | fail | 49 | 9.3 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_block.json\n",
+      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:   0%|          | 1/311 [00:00<03:06,  1.66it/s]\nLoading weights:  51%|#####     | 158/311 [00:00<00:00, 298.92it/s]\nLoading weights:  79%|#######8  | 245/311 [00:01<00:00, 281.44it/s]\nLoading weights:  98%|#########8| 305/311 [00:01<00:00, 263.41it/s]\nLoading weights: 100%|##########| 311/311 [00:01<00:00, 234.08it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:   0%|          | 1/311 [00:00<02:02,  2.53it/s]\nLoading weights:  66%|######5   | 204/311 [00:00<00:00, 533.14it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 475.56it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:   0%|          | 1/311 [00:00<02:47,  1.86it/s]\nLoading weights:  47%|####7     | 147/311 [00:00<00:00, 304.18it/s]\nLoading weights:  74%|#######3  | 229/311 [00:00<00:00, 354.45it/s]\nLoading weights:  95%|#########4| 294/311 [00:00<00:00, 376.65it/s]\nLoading weights: 100%|##########| 311/311 [00:01<00:00, 307.36it/s]\n"
     },
     {
       "method": "gptq",
@@ -140,21 +129,21 @@
         "--offline"
       ],
       "returncode": 0,
-      "seconds": 141.03242325782776,
+      "seconds": 168.03027272224426,
       "run_json": "benchmarks\\qwen3_06b_harness\\runs\\qwen06_gptq.json",
       "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_gptq",
       "baseline": {
         "name": "fp16",
         "perplexity": 92.93617607702829,
         "token_count": 49,
-        "seconds": 7.9786927700042725,
+        "seconds": 10.779386281967163,
         "error": null
       },
       "candidate": {
         "name": "ics_dequantized",
         "perplexity": 73.15260451680543,
         "token_count": 49,
-        "seconds": 8.062839031219482,
+        "seconds": 9.127168893814087,
         "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
       },
       "q4_k_m": {
@@ -183,8 +172,8 @@
         "dequantized_tensors_loaded": 4,
         "base_tensors_unchanged": 307
       },
-      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n      computing per-layer Hessian on calibration data...\n      Hessians for 4 layers\n      GPTQ quantized 4 layers\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 8.0 |  |\n| ics_dequantized | 73.1526 | 1.2704 | pass | 49 | 8.1 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_gptq.json\n",
-      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  41%|####      | 127/311 [00:00<00:00, 1259.49it/s]\nLoading weights:  81%|########1 | 253/311 [00:00<00:00, 1231.69it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1228.52it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  41%|####1     | 128/311 [00:00<00:00, 1279.54it/s]\nLoading weights:  85%|########5 | 265/311 [00:00<00:00, 1319.92it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1345.62it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  43%|####2     | 133/311 [00:00<00:00, 1316.27it/s]\nLoading weights:  85%|########5 | 265/311 [00:00<00:00, 1281.55it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1287.59it/s]\n"
+      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n      computing per-layer Hessian on calibration data...\n      Hessians for 4 layers\n      GPTQ quantized 4 layers\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 10.8 |  |\n| ics_dequantized | 73.1526 | 1.2704 | pass | 49 | 9.1 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_gptq.json\n",
+      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  30%|##9       | 92/311 [00:00<00:00, 893.06it/s]\nLoading weights:  76%|#######6  | 237/311 [00:00<00:00, 1216.15it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1247.75it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  24%|##4       | 76/311 [00:00<00:00, 583.81it/s]\nLoading weights:  83%|########3 | 259/311 [00:00<00:00, 1225.74it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1162.06it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  37%|###6      | 114/311 [00:00<00:00, 1127.12it/s]\nLoading weights:  84%|########4 | 262/311 [00:00<00:00, 1328.17it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1307.75it/s]\n"
     },
     {
       "method": "per_row_int4",
@@ -216,21 +205,21 @@
         "--offline"
       ],
       "returncode": 0,
-      "seconds": 121.82683873176575,
+      "seconds": 123.43127918243408,
       "run_json": "benchmarks\\qwen3_06b_harness\\runs\\qwen06_per_row_int4.json",
       "artifact_dir": ".pytest_cache\\ics_harness\\artifacts\\qwen06_per_row_int4",
       "baseline": {
         "name": "fp16",
         "perplexity": 92.93617607702829,
         "token_count": 49,
-        "seconds": 8.514298677444458,
+        "seconds": 9.534762382507324,
         "error": null
       },
       "candidate": {
         "name": "ics_dequantized",
         "perplexity": 131.00005479062318,
         "token_count": 49,
-        "seconds": 8.20517873764038,
+        "seconds": 8.876989364624023,
         "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
       },
       "q4_k_m": {
@@ -259,8 +248,8 @@
         "dequantized_tensors_loaded": 4,
         "base_tensors_unchanged": 307
       },
-      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n      Per-row INT4 quantized 4 layers\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 8.5 |  |\n| ics_dequantized | 131.0001 | 0.7094 | fail | 49 | 8.2 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_per_row_int4.json\n",
-      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  33%|###3      | 103/311 [00:00<00:00, 1028.16it/s]\nLoading weights:  78%|#######7  | 242/311 [00:00<00:00, 1240.09it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1257.41it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  44%|####3     | 136/311 [00:00<00:00, 1352.36it/s]\nLoading weights:  93%|#########3| 290/311 [00:00<00:00, 1445.28it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1447.83it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  43%|####3     | 134/311 [00:00<00:00, 1321.97it/s]\nLoading weights:  86%|########5 | 267/311 [00:00<00:00, 1291.59it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1285.64it/s]\n"
+      "stdout_tail": "[1/5] Discovering linear chains...\n      found 56 chains, selected 1\n[2/5] Computing activation Fisher Information...\n      computed Fisher for 4 layers\n[3/5] Finding permutations...\n[4/5] Applying permutations to weights...\n[5/5] Quantizing layers...\n      Per-row INT4 quantized 4 layers\n| model | perplexity | quality | status | tokens | seconds | note |\n| --- | ---: | ---: | --- | ---: | ---: | --- |\n| fp16 | 92.9362 | 1.0000 | baseline | 49 | 9.5 |  |\n| ics_dequantized | 131.0001 | 0.7094 | fail | 49 | 8.9 | 4 dequantized tensors loaded; 307 base tensors unchanged |\n| q4_k_m | unavailable | unavailable | unavailable | 0 | 0.0 | no --q4-gguf provided |\n\nWrote benchmarks\\qwen3_06b_harness\\runs\\qwen06_per_row_int4.json\n",
+      "stderr_tail": "\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  38%|###8      | 119/311 [00:00<00:00, 1188.62it/s]\nLoading weights:  86%|########6 | 268/311 [00:00<00:00, 1335.10it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1343.07it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  22%|##1       | 67/311 [00:00<00:00, 566.55it/s]\nLoading weights:  77%|#######6  | 239/311 [00:00<00:00, 1197.30it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1166.06it/s]\n\nLoading weights:   0%|          | 0/311 [00:00<?, ?it/s]\nLoading weights:  43%|####3     | 135/311 [00:00<00:00, 1349.47it/s]\nLoading weights:  97%|#########6| 301/311 [00:00<00:00, 1521.25it/s]\nLoading weights: 100%|##########| 311/311 [00:00<00:00, 1512.14it/s]\n"
     }
   ],
   "caveats": [

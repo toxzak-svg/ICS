@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ics.export import dequantized_state_dict, load_ics_model
 from ics.pipeline import ICSConfig, quantize_model
+from scripts.chain_limits import parse_max_chains
 from scripts.run_qwen3_06b_pipeline import DEFAULT_CALIBRATION, resolve_model_path
 
 
@@ -245,6 +246,9 @@ def ensure_ics_output(args: argparse.Namespace, model_path: str, tokenizer) -> P
         chain_name_filters=tuple(args.chain_filter),
         max_chains=args.max_chains,
         fisher_loss_mode=args.fisher_loss_mode,
+        gptq_group_size=args.gptq_group_size,
+        gptq_percdamp=args.gptq_percdamp,
+        gptq_blocksize=args.gptq_blocksize,
         erc_enabled=not args.disable_erc,
         erc_max_relative_error=args.erc_max_relative_error,
     )
@@ -338,7 +342,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rebuild-ics", action="store_true")
     parser.add_argument("--max-calibration-samples", type=int, default=1)
     parser.add_argument("--max-calibration-length", type=int, default=8)
-    parser.add_argument("--max-chains", type=int, default=1)
+    parser.add_argument("--max-chains", type=parse_max_chains, default=1)
     parser.add_argument("--chain-filter", action="append", default=[])
     parser.add_argument("--fisher-loss-mode", default="last_logit_mean", choices=["cross_entropy", "last_logit_mean"])
     parser.add_argument("--ics-block-size", type=int, default=64)
@@ -355,6 +359,9 @@ def parse_args() -> argparse.Namespace:
             "older variable-bit path; gptq is the Hessian-based diagnostic path."
         ),
     )
+    parser.add_argument("--gptq-group-size", type=int, default=128)
+    parser.add_argument("--gptq-percdamp", type=float, default=0.01)
+    parser.add_argument("--gptq-blocksize", type=int, default=128)
     parser.add_argument("--erc-max-relative-error", type=float, default=0.10)
     parser.add_argument("--disable-erc", action="store_true")
     parser.add_argument("--q4-gguf")

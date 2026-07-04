@@ -23,14 +23,18 @@ behavior.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
 
+import ics.export as export_module
+from ics.export import dequantized_state_dict, load_ics_model, save_ics_model
 from ics.gptq import gptq_quantize, dequantize_gptq
-from ics.quantize import quantize_blockwise, dequantize_blockwise
+from ics.pipeline import ICSConfig, ICSResult
+from ics.quantize import QuantizedTensor, quantize_blockwise, dequantize_blockwise
 
 
 def _l2_rel(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -60,6 +64,13 @@ def _make_structured_h(in_features: int, n_salient: int = 128, salient_scale: fl
     salient_dims = torch.randperm(in_features, generator=g)[:n_salient]
     X[:, salient_dims] *= salient_scale
     return X.T @ X / n_samples
+
+
+def _pack_gptq_block_major(Q: torch.Tensor, group_size: int) -> torch.Tensor:
+    pieces = []
+    for start in range(0, Q.shape[1], group_size):
+        pieces.append(Q[:, start:start + group_size].contiguous().reshape(-1))
+    return torch.cat(pieces).to(torch.int8)
 
 
 def test_gptq_beats_rtn_on_weighted_loss_with_structured_h():
@@ -195,6 +206,62 @@ def test_gptq_recovery_via_perm():
     assert err < 0.30, f"recovery failed: l2_rel {err:.4f} > 0.30 (quantization broken?)"
 
 
+def test_saved_gptq_tensor_dequantizes_from_block_layout():
+    """Saved GPTQ qdata uses block-row-major layout and dequantizes via export."""
+    group_size = 3
+    Q = torch.tensor(
+        [
+            [1, 2, 3, 4, 5, 6],
+            [-1, -2, -3, -4, -5, -6],
+        ],
+        dtype=torch.int8,
+    )
+    qdata = _pack_gptq_block_major(Q, group_size)
+    scales = torch.tensor([0.5, 0.25], dtype=torch.float32)
+    zeros = torch.zeros(2, dtype=torch.int32)
+    bits = torch.full((2,), 4, dtype=torch.int32)
+    qt = QuantizedTensor(
+        qdata=qdata,
+        scales=scales,
+        zeros=zeros,
+        bits=bits,
+        block_size=group_size,
+        original_shape=tuple(Q.shape),
+        quant_dim=1,
+        method="gptq_per_group",
+    )
+    gptq_perm = torch.tensor([2, 0, 5, 1, 4, 3], dtype=torch.long)
+    result = ICSResult(
+        perms={},
+        quant={"layer": qt},
+        bit_widths={"layer": bits},
+        fisher={},
+        config=ICSConfig(quant_method="gptq", gptq_group_size=group_size),
+        layer_perms={"layer": gptq_perm},
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = save_ics_model(result, tmp)
+        loaded = load_ics_model(out)
+        state = dequantized_state_dict(loaded)
+
+    raw_expected = torch.zeros_like(Q, dtype=torch.float32)
+    raw_expected[:, :group_size] = Q[:, :group_size].float() * scales[0]
+    raw_expected[:, group_size:] = Q[:, group_size:].float() * scales[1]
+    expected = torch.zeros_like(raw_expected)
+    expected[:, gptq_perm] = raw_expected
+
+    assert loaded["layers"]["layer"].qdata.tolist() == qdata.tolist(), (
+        "saved GPTQ qdata should preserve the block-row-major buffer layout"
+    )
+    assert torch.allclose(state["layer.weight"], expected), (
+        "saved GPTQ tensor did not dequantize through the export path"
+    )
+    assert not hasattr(export_module, "dequantize_gptq_per_group"), (
+        "stale row-major-only GPTQ dequant helper should not be exported"
+    )
+
+
 def main() -> int:
     print("=" * 60)
     print("GPTQ roundtrip tests (ics/gptq.py)")
@@ -207,6 +274,7 @@ def main() -> int:
         ("gptq_perm_sorts_by_descending_h_diag", test_gptq_perm_sorts_by_descending_h_diag),
         ("gptq_scales_zeros_shape", test_gptq_scales_zeros_shape),
         ("gptq_recovery_via_perm", test_gptq_recovery_via_perm),
+        ("saved_gptq_tensor_dequantizes_from_block_layout", test_saved_gptq_tensor_dequantizes_from_block_layout),
     ]
     for name, fn in tests:
         print(f"\n[test] {name}")

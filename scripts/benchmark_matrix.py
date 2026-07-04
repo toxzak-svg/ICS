@@ -19,6 +19,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from scripts.chain_limits import format_max_chains, parse_max_chains
+
 
 ALLOWED_METHODS = ("block", "gptq", "per_row_int4")
 PUBLISHABLE_FILES = ["RESULTS.md", "manifest.json", "package_manifest.json"]
@@ -185,6 +187,14 @@ def run_method(args: argparse.Namespace, method: str, output_dir: Path, scratch_
         str(args.max_calibration_samples),
         "--max-calibration-length",
         str(args.max_calibration_length),
+        "--max-chains",
+        format_max_chains(args.max_chains),
+        "--gptq-group-size",
+        str(args.gptq_group_size),
+        "--gptq-percdamp",
+        str(args.gptq_percdamp),
+        "--gptq-blocksize",
+        str(args.gptq_blocksize),
         "--min-quality-score",
         str(args.min_quality_score),
         "--rebuild-ics",
@@ -386,6 +396,10 @@ def build_manifest(args: argparse.Namespace, methods: list[str], runs: list[dict
         "max_eval_tokens": args.max_eval_tokens,
         "max_calibration_samples": args.max_calibration_samples,
         "max_calibration_length": args.max_calibration_length,
+        "max_chains": args.max_chains,
+        "gptq_group_size": args.gptq_group_size,
+        "gptq_percdamp": args.gptq_percdamp,
+        "gptq_blocksize": args.gptq_blocksize,
         "min_quality_score": args.min_quality_score,
         "git": git_info(),
         "runs": runs,
@@ -408,6 +422,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-eval-tokens", type=int, default=128)
     parser.add_argument("--max-calibration-samples", type=int, default=1)
     parser.add_argument("--max-calibration-length", type=int, default=8)
+    parser.add_argument("--max-chains", type=parse_max_chains, default=1)
+    parser.add_argument("--gptq-group-size", type=int, default=128)
+    parser.add_argument("--gptq-percdamp", type=float, default=0.01)
+    parser.add_argument("--gptq-blocksize", type=int, default=128)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])

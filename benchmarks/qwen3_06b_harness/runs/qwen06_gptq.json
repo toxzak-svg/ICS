@@ -33,14 +33,14 @@
       "name": "fp16",
       "perplexity": 92.93617607702829,
       "token_count": 49,
-      "seconds": 7.9786927700042725,
+      "seconds": 10.779386281967163,
       "error": null
     },
     {
       "name": "ics_dequantized",
       "perplexity": 73.15260451680543,
       "token_count": 49,
-      "seconds": 8.062839031219482,
+      "seconds": 9.127168893814087,
       "error": "4 dequantized tensors loaded; 307 base tensors unchanged"
     },
     {

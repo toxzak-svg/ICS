@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ics.export import save_ics_model
 from ics.pipeline import ICSConfig, discover_chains, quantize_model
+from scripts.chain_limits import parse_max_chains
 
 
 DEFAULT_CALIBRATION = [
@@ -90,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offline", action="store_true", help="set HF offline env vars before loading")
     parser.add_argument("--max-calibration-samples", type=int, default=1)
     parser.add_argument("--max-calibration-length", type=int, default=32)
-    parser.add_argument("--max-chains", type=int, default=1)
+    parser.add_argument("--max-chains", type=parse_max_chains, default=1)
     parser.add_argument(
         "--fisher-loss-mode",
         default="last_logit_mean",

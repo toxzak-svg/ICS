@@ -141,6 +141,12 @@ Expected local smoke result:
 Use `--output ./qwen3-0.6b-ics-smoke` without `--no-save` to write the
 safetensors export. The runner still has `--synthetic-tokenizer` for cache-only
 debugging, but use the real tokenizer for any meaningful calibration run.
+Use `--max-chains all` to run every discovered chain; keep this on GPU for
+serious runs, or pair it with `--quant-method gptq` in the benchmark harness for
+a CPU-bound expanded diagnostic.
+On the local CPU smoke text, GPTQ with `--gptq-group-size 8` passed at 16 MLP
+chains but failed at 24 chains and at all 28 MLP chains. Treat that as a
+diagnostic boundary, not report-grade model evidence.
 
 ## What this codebase does
 
@@ -231,9 +237,14 @@ python scripts/benchmark_matrix.py \
     --offline \
     --dtype fp16 \
     --methods block,gptq,per_row_int4 \
+    --max-chains 1 \
     --output-dir benchmarks/qwen3_06b_harness \
     --scratch-dir .pytest_cache/ics_harness
 ```
+
+For the expanded GPTQ smoke boundary, use `--methods gptq --max-chains 16 --gptq-group-size 8`;
+on the built-in 49-token text this passed the `0.90` quality gate, while 24
+chains and all 28 MLP chains did not.
 
 The matrix runner writes `manifest.json`, `RESULTS.md`, and
 `package_manifest.json` under `benchmarks/qwen3_06b_harness`, while large

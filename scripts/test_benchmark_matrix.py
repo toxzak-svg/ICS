@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -12,9 +14,12 @@ from scripts.benchmark_matrix import (
     artifact_stats,
     build_package_manifest,
     build_upload_plan,
+    format_max_chains,
     generate_results_markdown,
     parse_changed_files,
+    parse_args,
     parse_methods,
+    run_method,
 )
 
 
@@ -29,6 +34,56 @@ def test_parse_methods_rejects_unknown_method():
         assert "unknown method" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_parse_args_accepts_all_max_chains():
+    with patch.object(sys, "argv", ["benchmark_matrix.py", "--max-chains", "all"]):
+        args = parse_args()
+
+    assert args.max_chains is None
+    assert format_max_chains(args.max_chains) == "all"
+
+
+def test_run_method_forwards_gptq_tuning_args(tmp_path: Path):
+    output_dir = tmp_path / "out"
+    scratch_dir = tmp_path / "scratch"
+    args = SimpleNamespace(
+        model="Qwen/Qwen3-0.6B",
+        device="cpu",
+        dtype="fp16",
+        max_eval_tokens=128,
+        max_calibration_samples=1,
+        max_calibration_length=8,
+        max_chains=8,
+        gptq_group_size=8,
+        gptq_percdamp=0.02,
+        gptq_blocksize=64,
+        min_quality_score=0.9,
+        local_files_only=True,
+        offline=True,
+        eval_text_file=None,
+        q4_gguf=None,
+    )
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, text, capture_output, check):
+        captured["cmd"] = cmd
+        run_json = Path(cmd[cmd.index("--output-json") + 1])
+        run_json.parent.mkdir(parents=True, exist_ok=True)
+        run_json.write_text(
+            json.dumps({"results": [], "quality_summary": {}}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch("scripts.benchmark_matrix.subprocess.run", side_effect=fake_run):
+        run_method(args, "gptq", output_dir, scratch_dir)
+
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--max-chains") + 1] == "8"
+    assert cmd[cmd.index("--gptq-group-size") + 1] == "8"
+    assert cmd[cmd.index("--gptq-percdamp") + 1] == "0.02"
+    assert cmd[cmd.index("--gptq-blocksize") + 1] == "64"
 
 
 def test_artifact_stats_reads_tiny_ics_artifact(tmp_path: Path):
@@ -159,6 +214,8 @@ def main() -> int:
     tests = [
         test_parse_methods_accepts_known_methods,
         test_parse_methods_rejects_unknown_method,
+        test_parse_args_accepts_all_max_chains,
+        test_run_method_forwards_gptq_tuning_args,
         test_artifact_stats_reads_tiny_ics_artifact,
         test_generate_results_markdown_labels_smoke_and_methods,
         test_generate_results_markdown_surfaces_failed_process_note,

@@ -14,6 +14,7 @@ from scripts.benchmark_perplexity import (
     format_results_table,
     parse_llama_perplexity,
     parse_args,
+    parse_max_chains,
     perplexity_from_nll,
     summarize_quality,
 )
@@ -100,6 +101,40 @@ def test_parse_args_accepts_per_row_quant_method():
     assert args.quant_method == "per_row_int4"
 
 
+def test_parse_max_chains_accepts_all_for_full_pipeline():
+    assert parse_max_chains("all") is None
+    assert parse_max_chains("none") is None
+    assert parse_max_chains("8") == 8
+
+
+def test_parse_args_accepts_all_max_chains():
+    with patch.object(sys, "argv", ["benchmark_perplexity.py", "--max-chains", "all"]):
+        args = parse_args()
+
+    assert args.max_chains is None
+
+
+def test_parse_args_accepts_gptq_tuning_flags():
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "benchmark_perplexity.py",
+            "--gptq-group-size",
+            "64",
+            "--gptq-percdamp",
+            "0.05",
+            "--gptq-blocksize",
+            "64",
+        ],
+    ):
+        args = parse_args()
+
+    assert args.gptq_group_size == 64
+    assert args.gptq_percdamp == 0.05
+    assert args.gptq_blocksize == 64
+
+
 def main() -> int:
     tests = [
         test_perplexity_from_nll,
@@ -110,6 +145,9 @@ def main() -> int:
         test_summarize_quality_keeps_unavailable_candidates_out_of_gate,
         test_format_results_table_shows_quality_status,
         test_parse_args_accepts_per_row_quant_method,
+        test_parse_max_chains_accepts_all_for_full_pipeline,
+        test_parse_args_accepts_all_max_chains,
+        test_parse_args_accepts_gptq_tuning_flags,
     ]
     failures = []
     for test in tests:

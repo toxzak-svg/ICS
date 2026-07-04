@@ -2,7 +2,7 @@
 
 - Model: `Qwen/Qwen3-0.6B`
 - Evaluation label: `smoke`
-- Git commit: `892adacd40b7c87f4bae14a7d306997dddf47708`
+- Git commit: `4038de3112f62b7507d04ad2b7af32c6632ecd4b`
 - Dirty worktree: `True`
 
 | method | baseline PPL | ICS PPL | quality | status | artifact MiB | est. BPW | tensors | base unchanged | note |
