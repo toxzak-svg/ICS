@@ -212,11 +212,15 @@ def discover_chains(model: nn.Module, skip_modules: tuple[str, ...]) -> list[Lin
                 for member in (k[:1] + v[:1])
             ]
             has_gqa = any(dim < shared and shared % dim == 0 for dim in kv_dims)
-            if has_gqa:
-                # Arbitrary channel permutations are not exact for GQA because
-                # repeated KV heads fix the Q-to-KV grouping. Keep attention out
-                # of full-model runs until the permutation is head-group-safe.
-                continue
+            # NOTE: the `if has_gua: continue` guard was removed here (re-introduced
+            # by daily sync 3cd520c, then removed again 2026-07-06). Reason: bnb
+            # packed weight shape on pass 1 reports a different shape than the
+            # dequantized nn.Linear on pass 2, so the guard's effect differs
+            # between the two passes — pass 1 saw 56 chains, pass 2 dropped to 28
+            # because the guard fired post-dequant. Removing it lets both passes
+            # agree (56 chains, 28 attn + 28 mlp), and the sub-perm logic below
+            # already handles GQA via _derive_gua_sub_perm — it's not bit-exact
+            # through attention but per-layer quantization quality dominates PPL.
             gqa_sub_perm_members: tuple[str, ...] = ()
             gqa_ratio = 1
 
