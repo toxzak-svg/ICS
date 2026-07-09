@@ -14,3 +14,5 @@ benchmarks/qwen3_06b_*_quality.json
 colab_bridge/_*.py
 colab_bridge/_*.log
 colab_bridge/__pycache__/
+qwen3-0.6b-ics-full/model.safetensors
+qwen3-0.6b-ics-full-int4/model.safetensors
